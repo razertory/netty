@@ -419,6 +419,9 @@ abstract class AbstractHttp2StreamChannel extends AbstractChannel {
             super(channel);
         }
 
+        /**
+         * @deprecated  Use {@link #getWriteBufferWaterMark()} instead.
+         */
         @Override
         @Deprecated
         public int getWriteBufferHighWaterMark() {
@@ -426,6 +429,9 @@ abstract class AbstractHttp2StreamChannel extends AbstractChannel {
             return max(0, window);
         }
 
+        /**
+         * @deprecated  Use {@link #getWriteBufferWaterMark()} instead.
+         */
         @Override
         @Deprecated
         public int getWriteBufferLowWaterMark() {
@@ -437,7 +443,6 @@ abstract class AbstractHttp2StreamChannel extends AbstractChannel {
             return FlowControlledFrameSizeEstimator.INSTANCE;
         }
 
-        // TODO(buchgr): Throwing exceptions is not ideal. Maybe NO-OP and log a warning?
         @Override
         public WriteBufferWaterMark getWriteBufferWaterMark() {
             throw new UnsupportedOperationException();
@@ -448,12 +453,18 @@ abstract class AbstractHttp2StreamChannel extends AbstractChannel {
             throw new UnsupportedOperationException();
         }
 
+        /**
+         * @deprecated  Use {@link #setWriteBufferWaterMark(WriteBufferWaterMark)} instead.
+         */
         @Override
         @Deprecated
         public ChannelConfig setWriteBufferHighWaterMark(int writeBufferHighWaterMark) {
             throw new UnsupportedOperationException();
         }
 
+        /**
+         * @deprecated  Use {@link #setWriteBufferWaterMark(WriteBufferWaterMark)} instead.
+         */
         @Override
         @Deprecated
         public ChannelConfig setWriteBufferLowWaterMark(int writeBufferLowWaterMark) {
@@ -461,7 +472,6 @@ abstract class AbstractHttp2StreamChannel extends AbstractChannel {
         }
 
         @Override
-        @Deprecated
         public ChannelConfig setWriteBufferWaterMark(WriteBufferWaterMark writeBufferWaterMark) {
             throw new UnsupportedOperationException();
         }
