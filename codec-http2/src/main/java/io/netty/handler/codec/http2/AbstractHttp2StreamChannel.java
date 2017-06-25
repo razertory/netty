@@ -96,13 +96,8 @@ abstract class AbstractHttp2StreamChannel extends AbstractChannel {
     private volatile long outboundFlowControlWindow;
 
     static {
-        @SuppressWarnings("rawtypes")
-        AtomicLongFieldUpdater<AbstractHttp2StreamChannel> updater = AtomicLongFieldUpdater.newUpdater(
+        OUTBOUND_FLOW_CONTROL_WINDOW_UPDATER = AtomicLongFieldUpdater.newUpdater(
                 AbstractHttp2StreamChannel.class, "outboundFlowControlWindow");
-        if (updater == null) {
-            updater = AtomicLongFieldUpdater.newUpdater(AbstractHttp2StreamChannel.class, "outboundFlowControlWindow");
-        }
-        OUTBOUND_FLOW_CONTROL_WINDOW_UPDATER = updater;
     }
 
     protected AbstractHttp2StreamChannel(Channel parent, Http2Stream2 stream) {
@@ -146,7 +141,7 @@ abstract class AbstractHttp2StreamChannel extends AbstractChannel {
 
     @Override
     protected AbstractUnsafe newUnsafe() {
-        return new Unsafe();
+        return new Http2ChannelUnsafe();
     }
 
     @Override
@@ -373,7 +368,7 @@ abstract class AbstractHttp2StreamChannel extends AbstractChannel {
                + (frame.padding() & 1);
     }
 
-    private final class Unsafe extends AbstractUnsafe {
+    private final class Http2ChannelUnsafe extends AbstractUnsafe {
         @Override
         public void connect(final SocketAddress remoteAddress,
                 SocketAddress localAddress, final ChannelPromise promise) {
