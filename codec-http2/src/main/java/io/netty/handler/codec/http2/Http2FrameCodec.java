@@ -94,7 +94,7 @@ import static io.netty.handler.codec.http2.Http2CodecUtil.isStreamIdValid;
  *          public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
  *              if (msg instanceof Http2HeadersFrame) {
  *                  Http2HeadersFrame headersFrame = (Http2HeadersFrame) msg;
- *                  if (msg.stream().hasKey(KEY) == null) {
+ *                  if (!msg.stream().hasAttr(KEY)) {
  *                      // A new inbound stream.
  *                      msg.stream().attr(KEY).set(new ApplicationState());
  *                  }
