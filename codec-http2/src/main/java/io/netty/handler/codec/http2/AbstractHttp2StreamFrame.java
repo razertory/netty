@@ -23,16 +23,16 @@ import io.netty.util.internal.UnstableApi;
 @UnstableApi
 public abstract class AbstractHttp2StreamFrame implements Http2StreamFrame {
 
-    private volatile Http2Stream2 stream;
+    private volatile Http2FrameStream stream;
 
     @Override
-    public AbstractHttp2StreamFrame stream(Http2Stream2 stream) {
+    public AbstractHttp2StreamFrame stream(Http2FrameStream stream) {
         this.stream = stream;
         return this;
     }
 
     @Override
-    public Http2Stream2 stream() {
+    public Http2FrameStream stream() {
         return stream;
     }
 

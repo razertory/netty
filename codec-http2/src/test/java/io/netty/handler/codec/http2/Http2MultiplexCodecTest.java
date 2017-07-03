@@ -35,6 +35,8 @@ import io.netty.util.AsciiString;
 import io.netty.util.AttributeKey;
 
 import java.net.InetSocketAddress;
+
+import io.netty.util.DefaultAttributeMap;
 import org.hamcrest.Matchers;
 import org.junit.After;
 import org.junit.Before;
@@ -62,9 +64,9 @@ public class Http2MultiplexCodecTest {
             .method(HttpMethod.GET.asciiName()).scheme(HttpScheme.HTTPS.name())
             .authority(new AsciiString("example.org")).path(new AsciiString("/foo"));
 
-    private Http2Stream2 inboundStream;
+    private Http2FrameStream inboundStream;
 
-    private Http2Stream2 outboundStream;
+    private Http2FrameStream outboundStream;
 
     private static final int initialRemoteStreamWindow = 1024;
 
@@ -128,9 +130,9 @@ public class Http2MultiplexCodecTest {
     @Test
     public void framesShouldBeMultiplexed() {
 
-        Http2Stream2 stream3 = new Http2Stream2Impl(parentChannel).id(3);
-        Http2Stream2 stream5 = new Http2Stream2Impl(parentChannel).id(5);
-        Http2Stream2 stream11 = new Http2Stream2Impl(parentChannel).id(11);
+        Http2FrameStream stream3 = new Http2Stream2Impl(parentChannel).id(3);
+        Http2FrameStream stream5 = new Http2Stream2Impl(parentChannel).id(5);
+        Http2FrameStream stream11 = new Http2Stream2Impl(parentChannel).id(11);
 
         LastInboundHandler inboundHandler3 = streamActiveAndWriteHeaders(stream3);
         LastInboundHandler inboundHandler5 = streamActiveAndWriteHeaders(stream5);
@@ -238,7 +240,7 @@ public class Http2MultiplexCodecTest {
 
         parentChannel.flush();
 
-        Http2Stream2 stream2 = readOutboundHeadersAndAssignId();
+        Http2FrameStream stream2 = readOutboundHeadersAndAssignId();
 
         childChannel.close();
         parentChannel.runPendingTasks();
@@ -271,7 +273,7 @@ public class Http2MultiplexCodecTest {
         LastInboundHandler inboundHandler = streamActiveAndWriteHeaders(inboundStream);
 
         StreamException cause = new StreamException(inboundStream.id(), Http2Error.PROTOCOL_ERROR, "baaam!");
-        Exception http2Ex = new Http2Stream2Exception(inboundStream, Http2Error.PROTOCOL_ERROR, cause);
+        Exception http2Ex = new Http2FrameStreamException(inboundStream, Http2Error.PROTOCOL_ERROR, cause);
         parentChannel.pipeline().fireExceptionCaught(http2Ex);
 
         inboundHandler.checkException();
@@ -283,7 +285,7 @@ public class Http2MultiplexCodecTest {
 
         assertTrue(inboundHandler.isChannelActive());
         StreamException cause = new StreamException(inboundStream.id(), Http2Error.PROTOCOL_ERROR, "baaam!");
-        Exception http2Ex = new Http2Stream2Exception(inboundStream, Http2Error.PROTOCOL_ERROR, cause);
+        Exception http2Ex = new Http2FrameStreamException(inboundStream, Http2Error.PROTOCOL_ERROR, cause);
         parentChannel.pipeline().fireExceptionCaught(http2Ex);
         parentChannel.runPendingTasks();
 
@@ -413,7 +415,7 @@ public class Http2MultiplexCodecTest {
         childChannel.writeAndFlush(new DefaultHttp2HeadersFrame(new DefaultHttp2Headers()));
         parentChannel.flush();
 
-        Http2Stream2 stream2 = readOutboundHeadersAndAssignId();
+        Http2FrameStream stream2 = readOutboundHeadersAndAssignId();
 
         // Test for initial window size
         assertEquals(initialRemoteStreamWindow, childChannel.getOutboundFlowControlWindow());
@@ -533,7 +535,7 @@ public class Http2MultiplexCodecTest {
         assertEquals(expectedWindowSize > 0, channel.isWritable());
     }
 
-    private LastInboundHandler streamActiveAndWriteHeaders(Http2Stream2 stream) {
+    private LastInboundHandler streamActiveAndWriteHeaders(Http2FrameStream stream) {
         LastInboundHandler inboundHandler = new LastInboundHandler();
         childChannelInitializer.handler = inboundHandler;
         assertFalse(inboundHandler.isChannelActive());
@@ -545,7 +547,7 @@ public class Http2MultiplexCodecTest {
         return inboundHandler;
     }
 
-    private static void verifyFramesMultiplexedToCorrectChannel(Http2Stream2 stream,
+    private static void verifyFramesMultiplexedToCorrectChannel(Http2FrameStream stream,
                                                                 LastInboundHandler inboundHandler,
                                                                 int numFrames) {
         for (int i = 0; i < numFrames; i++) {
@@ -564,7 +566,7 @@ public class Http2MultiplexCodecTest {
     /**
      * Simulates the frame codec, in first assigning an identifier and the completing the write promise.
      */
-    Http2Stream2 readOutboundHeadersAndAssignId() {
+    Http2FrameStream readOutboundHeadersAndAssignId() {
         // Only peek at the frame, so to not complete the promise of the write. We need to first
         // assign a stream identifier, as the frame codec would do.
         Http2HeadersFrame headersFrame = (Http2HeadersFrame) parentChannel.outboundMessages().peek();
@@ -595,20 +597,19 @@ public class Http2MultiplexCodecTest {
         }
 
         @Override
-        void forEachActiveStream0(Http2Stream2Visitor streamVisitor) {
+        void forEachActiveStream0(Http2FrameStreamVisitor streamVisitor) {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        Http2Stream2 newStream0() {
+        Http2FrameStream newStream0() {
             return new Http2Stream2Impl(ctx.channel());
         }
     }
 
-    static final class Http2Stream2Impl implements Http2Stream2 {
+    static final class Http2Stream2Impl extends DefaultAttributeMap implements Http2FrameStream {
 
         private int id = -1;
-        private Object managedState;
         private final ChannelPromise closeFuture;
 
         Http2Stream2Impl(Channel ch) {
@@ -616,7 +617,7 @@ public class Http2MultiplexCodecTest {
         }
 
         @Override
-        public Http2Stream2 id(int id) {
+        public Http2FrameStream id(int id) {
             this.id = id;
             return this;
         }
@@ -624,17 +625,6 @@ public class Http2MultiplexCodecTest {
         @Override
         public int id() {
             return id;
-        }
-
-        @Override
-        public Http2Stream2 managedState(Object state) {
-            managedState = state;
-            return this;
-        }
-
-        @Override
-        public Object managedState() {
-            return managedState;
         }
 
         @Override

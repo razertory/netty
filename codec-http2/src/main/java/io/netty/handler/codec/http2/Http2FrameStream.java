@@ -18,37 +18,30 @@ package io.netty.handler.codec.http2;
 
 import io.netty.channel.ChannelFuture;
 import io.netty.handler.codec.http2.Http2Stream.State;
+import io.netty.util.Attribute;
+import io.netty.util.AttributeKey;
+import io.netty.util.AttributeMap;
 import io.netty.util.internal.UnstableApi;
 
 /**
  * A single stream within a HTTP/2 connection. To be used with the {@link Http2FrameCodec}.
  */
 @UnstableApi
-public interface Http2Stream2 {
+public interface Http2FrameStream extends AttributeMap {
 
     /**
      * The stream with identifier 0, representing the HTTP/2 connection.
      */
-    Http2Stream2 CONNECTION_STREAM = new Http2Stream2() {
+    Http2FrameStream CONNECTION_STREAM = new Http2FrameStream() {
 
         @Override
-        public Http2Stream2 id(int id) {
+        public Http2FrameStream id(int id) {
             throw new UnsupportedOperationException();
         }
 
         @Override
         public int id() {
             return 0;
-        }
-
-        @Override
-        public Http2Stream2 managedState(Object state) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public Object managedState() {
-            throw new UnsupportedOperationException();
         }
 
         @Override
@@ -60,6 +53,16 @@ public interface Http2Stream2 {
         public ChannelFuture closeFuture() {
             throw new UnsupportedOperationException();
         }
+
+        @Override
+        public <T> Attribute<T> attr(AttributeKey<T> key) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public <T> boolean hasAttr(AttributeKey<T> key) {
+            return false;
+        }
     };
 
     /**
@@ -68,7 +71,7 @@ public interface Http2Stream2 {
      * <p>This method must never be called by user code, except it might be useful in tests. This method may be called
      * at most once.
      */
-    Http2Stream2 id(int id);
+    Http2FrameStream id(int id);
 
     /**
      * Returns the stream identifier.
@@ -77,18 +80,6 @@ public interface Http2Stream2 {
      * identifier.
      */
     int id();
-
-    /**
-     * Attach application specific state to this HTTP/2 stream.
-     *
-     * <p>The state is maintained until the stream or the channel are closed (whatever happens first).
-     */
-    Http2Stream2 managedState(Object state);
-
-    /**
-     * Returns the application specific state object or {@code null} if no state has been attached yet.
-     */
-    Object managedState();
 
     /**
      * Returns the state of this stream.

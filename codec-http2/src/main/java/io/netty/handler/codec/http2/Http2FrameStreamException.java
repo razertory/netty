@@ -17,16 +17,16 @@
 package io.netty.handler.codec.http2;
 
 /**
- * A HTTP/2 exception for a specific {@link Http2Stream2}.
+ * A HTTP/2 exception for a specific {@link Http2FrameStream}.
  */
-public class Http2Stream2Exception extends Exception {
+public class Http2FrameStreamException extends Exception {
 
     private static final long serialVersionUID = -4407186173493887044L;
 
     private final Http2Error error;
-    private final Http2Stream2 stream;
+    private final Http2FrameStream stream;
 
-    public <T> Http2Stream2Exception(Http2Stream2 stream, Http2Error error, Throwable cause) {
+    public <T> Http2FrameStreamException(Http2FrameStream stream, Http2Error error, Throwable cause) {
         super(cause.getMessage(), cause);
         this.stream = stream;
         this.error = error;
@@ -36,7 +36,7 @@ public class Http2Stream2Exception extends Exception {
         return error;
     }
 
-    public Http2Stream2 stream() {
+    public Http2FrameStream stream() {
         return stream;
     }
 }

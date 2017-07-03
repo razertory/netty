@@ -64,7 +64,7 @@ public final class DefaultHttp2HeadersFrame extends AbstractHttp2StreamFrame imp
     }
 
     @Override
-    public DefaultHttp2HeadersFrame stream(Http2Stream2 stream) {
+    public DefaultHttp2HeadersFrame stream(Http2FrameStream stream) {
         super.stream(stream);
         return this;
     }

@@ -32,7 +32,7 @@ public class DefaultHttp2WindowUpdateFrame extends AbstractHttp2StreamFrame impl
     }
 
     @Override
-    public DefaultHttp2WindowUpdateFrame stream(Http2Stream2 stream) {
+    public DefaultHttp2WindowUpdateFrame stream(Http2FrameStream stream) {
         super.stream(stream);
         return this;
     }
