@@ -370,26 +370,6 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
                 assert !childPromise.isCancellable();
                 ChannelFutureListener childPromiseNotifier = new ChannelPromiseNotifier(childPromise);
                 ChannelPromise parentPromise = ctx.newPromise().addListener(childPromiseNotifier);
-
-                /*
-                if (isStreamValid(frame.stream())) {
-                    ReferenceCountUtil.release(frame);
-                    throw new IllegalArgumentException("Stream id must not be set on the frame. Was: "
-                        + frame.stream().id());
-                }
-                if (!isStreamValid(frame.stream())) {
-                    if (!(frame instanceof Http2HeadersFrame)) {
-                        ReferenceCountUtil.release(frame);
-                        throw new IllegalArgumentException("The first frame must be a headers frame. Was: "
-                            + frame.name());
-                    }
-                    //frame = new ChannelCarryingHeadersFrame((Http2HeadersFrame) frame, this);
-                    // Handle errors on stream creation
-                    parentPromise.addListener(this);
-                } else {
-                    frame.stream(stream());
-                }
-                */
                 writeFromStreamChannel(frame, parentPromise, false);
             } else if (msg instanceof Http2GoAwayFrame) {
                 ChannelPromise promise = ctx.newPromise();
