@@ -83,7 +83,7 @@ abstract class AbstractHttp2StreamChannel extends AbstractChannel {
         }
     };
 
-    private final Http2Stream2 stream;
+    private final Http2FrameStream stream;
     private boolean closed;
     private boolean readInProgress;
 
@@ -100,12 +100,12 @@ abstract class AbstractHttp2StreamChannel extends AbstractChannel {
                 AbstractHttp2StreamChannel.class, "outboundFlowControlWindow");
     }
 
-    protected AbstractHttp2StreamChannel(Channel parent, Http2Stream2 stream) {
+    protected AbstractHttp2StreamChannel(Channel parent, Http2FrameStream stream) {
         super(parent);
         this.stream = stream;
     }
 
-    protected Http2Stream2 stream() {
+    protected Http2FrameStream stream() {
         return stream;
     }
 

@@ -20,20 +20,20 @@ import io.netty.util.internal.UnstableApi;
 /**
  * A frame whose meaning <em>may</em> apply to a particular stream, instead of the entire connection. It is still
  * possible for this frame type to apply to the entire connection. In such cases, the {@link #stream()} must return
- * {@link Http2Stream2#CONNECTION_STREAM}. If the frame applies to a stream, the {@link Http2Stream2#id()} must be
- * greater than zero.
+ * {@link Http2FrameStream#CONNECTION_STREAM}. If the frame applies to a stream, the {@link Http2FrameStream#id()} must
+ * be greater than zero.
  */
 @UnstableApi
 public interface Http2StreamFrame extends Http2Frame {
 
     /**
-     * Set the {@link Http2Stream2} object for this frame.
+     * Set the {@link Http2FrameStream} object for this frame.
      */
-    Http2StreamFrame stream(Http2Stream2 stream);
+    Http2StreamFrame stream(Http2FrameStream stream);
 
     /**
-     * Returns the {@link Http2Stream2} object for this frame, or {@code null} if the frame has yet to be associated
+     * Returns the {@link Http2FrameStream} object for this frame, or {@code null} if the frame has yet to be associated
      * with a stream.
      */
-    Http2Stream2 stream();
+    Http2FrameStream stream();
 }

@@ -91,14 +91,14 @@ public class Http2StreamChannelBootstrap {
      * Creates a new channel that will eventually map to a local/outbound HTTP/2 stream.
      */
     public ChannelFuture connect() {
-        Http2Stream2 newStream = channelAndCodec.multiplexCodec.newStream();
+        Http2FrameStream newStream = channelAndCodec.multiplexCodec.newStream();
         return connect(newStream);
     }
 
     /**
      * Used by the {@link Http2MultiplexCodec} to instantiate incoming/remotely-created streams.
      */
-    ChannelFuture connect(Http2Stream2 stream) {
+    ChannelFuture connect(Http2FrameStream stream) {
         validateState();
 
         ParentChannelAndMultiplexCodec channelAndCodec0 = channelAndCodec;

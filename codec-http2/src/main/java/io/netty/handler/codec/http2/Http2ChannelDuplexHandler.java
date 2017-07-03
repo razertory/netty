@@ -24,7 +24,7 @@ import io.netty.channel.ChannelPipeline;
  * A {@link ChannelDuplexHandler} providing additional functionality for HTTP/2. Specifically it allows to:
  * <ul>
  *     <li>Create new outbound streams using {@link #newStream()}.</li>
- *     <li>Iterate over all active streams using {@link #forEachActiveStream(Http2Stream2Visitor)}.</li>
+ *     <li>Iterate over all active streams using {@link #forEachActiveStream(Http2FrameStreamVisitor)}.</li>
  * </ul>
  *
  * <p>The {@link Http2FrameCodec} is required to be part of the {@link ChannelPipeline} before this handler is added,
@@ -45,11 +45,11 @@ public class Http2ChannelDuplexHandler extends ChannelDuplexHandler {
     }
 
     /**
-     * Creates a new {@link Http2Stream2} object.
+     * Creates a new {@link Http2FrameStream} object.
      *
      * <p>This method is <em>thread-safe</em>.
      */
-    public final Http2Stream2 newStream() {
+    public final Http2FrameStream newStream() {
         return newStream0();
     }
 
@@ -58,17 +58,17 @@ public class Http2ChannelDuplexHandler extends ChannelDuplexHandler {
      *
      * <p>This method may only be called from the eventloop thread.
      */
-    protected final void forEachActiveStream(Http2Stream2Visitor streamVisitor) throws Http2Exception {
+    protected final void forEachActiveStream(Http2FrameStreamVisitor streamVisitor) throws Http2Exception {
         forEachActiveStream0(streamVisitor);
     }
 
     // So that it can be overwritten by tests, without being visible to the public.
-    void forEachActiveStream0(Http2Stream2Visitor streamVisitor) throws Http2Exception {
+    void forEachActiveStream0(Http2FrameStreamVisitor streamVisitor) throws Http2Exception {
         frameCodec.forEachActiveStream(streamVisitor);
     }
 
     // So that it can be overwritten by tests, without being visible to the public.
-    Http2Stream2 newStream0() {
+    Http2FrameStream newStream0() {
         if (frameCodec == null) {
             throw new IllegalStateException("Frame codec not found. Has the handler been added to a pipeline?");
         }
