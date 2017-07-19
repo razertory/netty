@@ -90,7 +90,7 @@ public class Http2ServerDowngrader extends MessageToMessageCodec<Http2StreamFram
             }
         } else if (frame instanceof Http2DataFrame) {
             Http2DataFrame dataFrame = (Http2DataFrame) frame;
-            if (dataFrame.endStream()) {
+            if (dataFrame.isEndStream()) {
                 out.add(new DefaultLastHttpContent(dataFrame.content(), validateHeaders));
             } else {
                 out.add(new DefaultHttpContent(dataFrame.content()));

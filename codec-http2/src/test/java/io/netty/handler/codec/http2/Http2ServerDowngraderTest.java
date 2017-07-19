@@ -73,7 +73,7 @@ public class Http2ServerDowngraderTest {
         Http2DataFrame dataFrame = ch.readOutbound();
         try {
             assertThat(dataFrame.content().toString(CharsetUtil.UTF_8), is("hello world"));
-            assertTrue(dataFrame.endStream());
+            assertTrue(dataFrame.isEndStream());
         } finally {
             dataFrame.release();
         }
@@ -118,7 +118,7 @@ public class Http2ServerDowngraderTest {
         Http2DataFrame dataFrame = ch.readOutbound();
         try {
             assertThat(dataFrame.content().toString(CharsetUtil.UTF_8), is("hello world"));
-            assertFalse(dataFrame.endStream());
+            assertFalse(dataFrame.isEndStream());
         } finally {
             dataFrame.release();
         }
@@ -155,7 +155,7 @@ public class Http2ServerDowngraderTest {
         Http2DataFrame dataFrame = ch.readOutbound();
         try {
             assertThat(dataFrame.content().toString(CharsetUtil.UTF_8), is("hello world"));
-            assertFalse(dataFrame.endStream());
+            assertFalse(dataFrame.isEndStream());
         } finally {
             dataFrame.release();
         }
@@ -173,7 +173,7 @@ public class Http2ServerDowngraderTest {
         Http2DataFrame emptyFrame = ch.readOutbound();
         try {
             assertThat(emptyFrame.content().readableBytes(), is(0));
-            assertTrue(emptyFrame.endStream());
+            assertTrue(emptyFrame.isEndStream());
         } finally {
             emptyFrame.release();
         }
@@ -192,7 +192,7 @@ public class Http2ServerDowngraderTest {
         Http2DataFrame dataFrame = ch.readOutbound();
         try {
             assertThat(dataFrame.content().toString(CharsetUtil.UTF_8), is("hello world"));
-            assertTrue(dataFrame.endStream());
+            assertTrue(dataFrame.isEndStream());
         } finally {
             dataFrame.release();
         }
@@ -229,7 +229,7 @@ public class Http2ServerDowngraderTest {
         Http2DataFrame dataFrame = ch.readOutbound();
         try {
             assertThat(dataFrame.content().toString(CharsetUtil.UTF_8), is("hello world"));
-            assertFalse(dataFrame.endStream());
+            assertFalse(dataFrame.isEndStream());
         } finally {
             dataFrame.release();
         }
