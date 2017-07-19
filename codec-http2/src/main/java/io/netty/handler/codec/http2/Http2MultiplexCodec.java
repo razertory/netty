@@ -350,7 +350,6 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
         @Override
         protected void doWrite(Object msg, ChannelPromise childPromise) {
             if (msg instanceof Http2StreamFrame) {
-               // Http2StreamFrame frame = (Http2StreamFrame) msg;
                 Http2StreamFrame frame = validateStreamFrame(msg);
                 if (!firstFrameWritten && !isStreamIdValid(stream().id())) {
                     if (!(frame instanceof Http2HeadersFrame)) {
