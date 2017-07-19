@@ -164,7 +164,7 @@ public class Http2CodecTest {
         assertNotNull(dataFrame);
         assertEquals(3, dataFrame.stream().id());
         assertEquals(data.resetReaderIndex(), dataFrame.content());
-        assertTrue(dataFrame.endStream());
+        assertTrue(dataFrame.isEndStream());
         dataFrame.release();
 
         childChannel.close();

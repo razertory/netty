@@ -431,7 +431,7 @@ public class Http2FrameCodec extends ChannelDuplexHandler {
         if (frame instanceof Http2DataFrame) {
             Http2DataFrame dataFrame = (Http2DataFrame) frame;
             http2Handler.encoder().writeData(http2HandlerCtx, frame.stream().id(), dataFrame.content().retain(),
-                                             dataFrame.padding(), dataFrame.endStream(), promise);
+                                             dataFrame.padding(), dataFrame.isEndStream(), promise);
         } else if (frame instanceof Http2HeadersFrame) {
             writeHeadersFrame((Http2HeadersFrame) frame, promise);
         } else if (frame instanceof Http2ResetFrame) {

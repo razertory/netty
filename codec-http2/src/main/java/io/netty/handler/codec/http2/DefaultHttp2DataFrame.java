@@ -87,7 +87,7 @@ public final class DefaultHttp2DataFrame extends AbstractHttp2StreamFrame implem
     }
 
     @Override
-    public boolean endStream() {
+    public boolean isEndStream() {
         return endStream;
     }
 

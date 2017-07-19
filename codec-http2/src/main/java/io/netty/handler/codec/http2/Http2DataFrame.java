@@ -39,7 +39,7 @@ public interface Http2DataFrame extends Http2StreamFrame, ByteBufHolder {
     /**
      * Returns {@code true} if the END_STREAM flag ist set.
      */
-    boolean endStream();
+    boolean isEndStream();
 
     @Override
     Http2DataFrame copy();
