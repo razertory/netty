@@ -29,7 +29,7 @@ import static io.netty.util.internal.ObjectUtil.checkNotNull;
 public final class Http2CodecBuilder {
     private static final Http2FrameLogger HTTP2_FRAME_LOGGER = new Http2FrameLogger(INFO, Http2Codec.class);
 
-    private final Http2StreamChannelBootstrap bootstrap;
+    private final ChannelHandler childHandler;
     private final boolean server;
     private Http2Settings initialSettings;
     private Http2FrameLogger frameLogger;
@@ -39,21 +39,11 @@ public final class Http2CodecBuilder {
      * Creates a new {@link Http2Codec} builder.
      *
      * @param server {@code true} this is a server
-     * @param streamHandler the handler added to channels for remotely-created streams. It must be
-     *     {@link ChannelHandler.Sharable}. {@code null} if the event loop from the parent channel should be used.
+     * @param childHandler the handler added to channels for remotely-created streams. It must be
+     *     {@link ChannelHandler.Sharable}.
      */
-    public Http2CodecBuilder(boolean server, ChannelHandler streamHandler) {
-        this(server, new Http2StreamChannelBootstrap().handler(streamHandler));
-    }
-
-    /**
-     * Creates a new {@link Http2Codec} builder.
-     *
-     * @param server {@code true} this is a server
-     * @param bootstrap bootstrap used to instantiate child channels for remotely-created streams.
-     */
-    public Http2CodecBuilder(boolean server, Http2StreamChannelBootstrap bootstrap) {
-        this.bootstrap = checkNotNull(bootstrap, "bootstrap");
+    public Http2CodecBuilder(boolean server, ChannelHandler childHandler) {
+        this.childHandler = checkNotNull(childHandler, "childHandler");
         this.server = server;
         this.initialSettings = Http2Settings.defaultSettings();
         this.frameLogger = HTTP2_FRAME_LOGGER;
@@ -124,7 +114,7 @@ public final class Http2CodecBuilder {
      * Builds/creates a new {@link Http2Codec} instance using this builder's current settings.
      */
     public Http2Codec build() {
-        return new Http2Codec(server, bootstrap,
+        return new Http2Codec(server, childHandler,
             frameWriter(), frameLogger(), initialSettings());
     }
 }

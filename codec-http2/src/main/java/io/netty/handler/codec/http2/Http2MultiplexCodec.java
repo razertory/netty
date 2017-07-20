@@ -22,20 +22,16 @@ import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandler;
 import io.netty.channel.ChannelHandlerContext;
-import io.netty.channel.ChannelOption;
 import io.netty.channel.ChannelPromise;
 import io.netty.channel.ChannelPromiseNotifier;
-import io.netty.util.AttributeKey;
+import io.netty.channel.EventLoop;
 import io.netty.util.ReferenceCountUtil;
 import io.netty.util.ReferenceCounted;
 import io.netty.util.internal.UnstableApi;
-import io.netty.util.internal.logging.InternalLogger;
-import io.netty.util.internal.logging.InternalLoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Map.Entry;
 import java.util.concurrent.ConcurrentHashMap;
 
 import static io.netty.handler.codec.http2.Http2CodecUtil.isOutboundStream;
@@ -57,7 +53,7 @@ import static io.netty.handler.codec.http2.Http2CodecUtil.isStreamIdValid;
  * free to close the channel in response to such events if they don't have use for any queued
  * messages.
  *
- * <p>Outbound streams are supported via the {@link Http2StreamChannelBootstrap}.
+ * <p>Outbound streams are supported via the {@link #newChildChannel(ChannelHandler)}.
  *
  * <p>{@link ChannelConfig#setMaxMessagesPerRead(int)} and {@link ChannelConfig#setAutoRead(boolean)} are supported.
  *
@@ -68,18 +64,48 @@ import static io.netty.handler.codec.http2.Http2CodecUtil.isStreamIdValid;
  * before propagating a reference counted object through the pipeline, and thus an application handler needs to release
  * such an object after having consumed it. For more information on reference counting take a look at
  * http://netty.io/wiki/reference-counted-objects.html
+ *
+ * <h3>Channel Events</h3>
+ *
+ * A child channel becomes active as soon as it is registered to an {@link EventLoop}. Therefore, an active channel
+ * does not map to an active HTTP/2 stream immediately. Only once a {@link Http2HeadersFrame} has been successfully sent
+ * or received, does the channel map to an active HTTP/2 stream. In case it is not possible to open a new HTTP/2 stream
+ * (i.e. due to the maximum number of active streams being exceeded), the child channel receives an exception
+ * indicating the cause and is closed immediately thereafter.
+ *
+ * <h3>Writability and Flow Control</h3>
+ *
+ * A child channel observes outbound/remote flow control via the channel's writability. A channel only becomes writable
+ * when it maps to an active HTTP/2 stream and the stream's flow control window is greater than zero. A child channel
+ * does not know about the connection-level flow control window. {@link ChannelHandler}s are free to ignore the
+ * channel's writability, in which case the excessive writes will be buffered by the parent channel. It's important to
+ * note that only {@link Http2DataFrame}s are subject to HTTP/2 flow control. So it's perfectly legal (and expected)
+ * by a handler that aims to respect the channel's writability to e.g. write a {@link Http2DataFrame} even if the
+ * channel is marked unwritable.
  */
 @UnstableApi
 public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
 
-    private static final InternalLogger LOG = InternalLoggerFactory.getInstance(Http2MultiplexCodec.class);
+    private static final ChannelFutureListener CHILD_CHANNEL_REGISTRATION_LISTENER = new ChannelFutureListener() {
+        @Override
+        public void operationComplete(ChannelFuture future) throws Exception {
+            // Handle any errors that occurred on the local thread while registering. Even though
+            // failures can happen after this point, they will be handled by the channel by closing the
+            // childChannel.
+            Channel childChannel = future.channel();
+            if (future.cause() != null) {
+                if (childChannel.isRegistered()) {
+                    childChannel.close();
+                } else {
+                    childChannel.unsafe().closeForcibly();
+                }
+            }
+        }
+    };
 
     // TODO: Use some sane initial capacity.
     private final Map<Http2FrameStream, Http2StreamChannel> channels =
             new ConcurrentHashMap<Http2FrameStream, Http2StreamChannel>();
-
-    // Visible for testing
-    final Http2StreamChannelBootstrap bootstrap;
 
     private final List<Http2StreamChannel> channelsToFireChildReadComplete = new ArrayList<Http2StreamChannel>();
     private final boolean server;
@@ -92,23 +118,17 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
      * Construct a new handler whose child channels run in a different event loop.
      *
      * @param server {@code true} this is a server
-     * @param bootstrap bootstrap used to instantiate child channels for remotely-created streams.
      */
-    public Http2MultiplexCodec(boolean server, Http2StreamChannelBootstrap bootstrap) {
-        if (bootstrap.parentChannel() != null) {
-            throw new IllegalStateException("The parent channel must not be set on the bootstrap.");
-        }
+    public Http2MultiplexCodec(boolean server) {
         this.server = server;
-        this.bootstrap = new Http2StreamChannelBootstrap(bootstrap);
     }
 
     @Override
     public void handlerAdded(ChannelHandlerContext ctx) throws Exception {
-        this.ctx = ctx;
         if (ctx.executor() != ctx.channel().eventLoop()) {
             throw new IllegalStateException("EventExecutor must be EventLoop of Channel");
         }
-        bootstrap.parentChannel(ctx.channel());
+        this.ctx = ctx;
         super.handlerAdded(ctx);
     }
 
@@ -196,8 +216,11 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
     private Http2StreamChannel onStreamActive(Http2FrameStream stream) {
         Http2StreamChannel childChannel = channels.get(stream);
         if (childChannel == null) {
-            ChannelFuture future = bootstrap.connect(stream);
-            childChannel = (Http2StreamChannel) future.channel();
+            childChannel = new Http2StreamChannel(ctx.channel(), stream);
+
+            ctx.fireChannelRead(childChannel);
+            ChannelFuture future = ctx.channel().eventLoop().register(childChannel);
+            future.addListener(CHILD_CHANNEL_REGISTRATION_LISTENER);
             channels.put(stream, childChannel);
         }
 
@@ -205,6 +228,17 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
         childChannel.incrementOutboundFlowControlWindow(initialOutboundStreamWindow);
         childChannel.pipeline().fireChannelWritabilityChanged();
         return childChannel;
+    }
+
+    // TODO: This is most likely not the best way to expose this, need to think more about it.
+    public final ChannelFuture newChildChannel(ChannelHandler handler) {
+        Http2StreamChannel childChannel = new Http2StreamChannel(ctx.channel(), newStream());
+        if (handler != null) {
+            childChannel.pipeline().addLast(handler);
+        }
+        ChannelFuture future = ctx.channel().eventLoop().register(childChannel);
+        future.addListener(CHILD_CHANNEL_REGISTRATION_LISTENER);
+        return future;
     }
 
     @Override
@@ -234,17 +268,13 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
         }
     }
 
-    final void flushFromStreamChannel() {
+    private void flushFromStreamChannel() {
         assert ctx.executor().inEventLoop();
         flush(ctx);
     }
 
-    final void writeFromStreamChannel(final Http2Frame frame, final ChannelPromise promise, final boolean flush) {
+    private void writeFromStreamChannel(final Http2Frame frame, final ChannelPromise promise, final boolean flush) {
         assert ctx.executor().inEventLoop();
-        writeFromStreamChannel0(frame, flush, promise);
-    }
-
-    private void writeFromStreamChannel0(Http2Frame frame, boolean flush, ChannelPromise promise) {
         try {
             ctx.write(frame, promise);
         } catch (Throwable cause) {
@@ -267,59 +297,6 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
             childChannel.fireChildReadComplete();
         }
         channelsToFireChildReadComplete.clear();
-    }
-
-    ChannelFuture createStreamChannel(Channel parentChannel, ChannelHandler handler,
-                                              Map<ChannelOption<?>, Object> options,
-                                              Map<AttributeKey<?>, Object> attrs,
-                                              Http2FrameStream stream) {
-        final Http2StreamChannel childChannel = new Http2StreamChannel(parentChannel, stream);
-        childChannel.pipeline().addLast(handler);
-
-        initOpts(childChannel, options);
-        initAttrs(childChannel, attrs);
-
-        ChannelFuture future = parentChannel.eventLoop().register(childChannel);
-        future.addListener(new ChannelFutureListener() {
-            @Override
-            public void operationComplete(ChannelFuture future) throws Exception {
-                // Handle any errors that occurred on the local thread while registering. Even though
-                // failures can happen after this point, they will be handled by the channel by closing the
-                // childChannel.
-                if (future.cause() != null) {
-                    if (childChannel.isRegistered()) {
-                        childChannel.close();
-                    } else {
-                        childChannel.unsafe().closeForcibly();
-                    }
-                }
-            }
-        });
-        return future;
-    }
-
-    @SuppressWarnings("unchecked")
-    private static void initOpts(Channel channel, Map<ChannelOption<?>, Object> opts) {
-        if (opts != null) {
-            for (Entry<ChannelOption<?>, Object> e: opts.entrySet()) {
-                try {
-                    if (!channel.config().setOption((ChannelOption<Object>) e.getKey(), e.getValue())) {
-                        LOG.warn("Unknown channel option: " + e);
-                    }
-                } catch (Throwable t) {
-                    LOG.warn("Failed to set a channel option: " + channel, t);
-                }
-            }
-        }
-    }
-
-    @SuppressWarnings("unchecked")
-    private static void initAttrs(Channel channel, Map<AttributeKey<?>, Object> attrs) {
-        if (attrs != null) {
-            for (Entry<AttributeKey<?>, Object> e: attrs.entrySet()) {
-                channel.attr((AttributeKey<Object>) e.getKey()).set(e.getValue());
-            }
-        }
     }
 
     final class Http2StreamChannel extends AbstractHttp2StreamChannel {
