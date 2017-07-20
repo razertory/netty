@@ -132,12 +132,6 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
         super.handlerAdded(ctx);
     }
 
-    // Override this to signal it will never throw an exception.
-    @Override
-    public void flush(ChannelHandlerContext ctx) {
-        ctx.flush();
-    }
-
     @Override
     public void userEventTriggered(ChannelHandlerContext ctx, Object evt) throws Exception {
         if (evt instanceof Http2FrameStreamEvent) {
@@ -268,23 +262,6 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
         }
     }
 
-    private void flushFromStreamChannel() {
-        assert ctx.executor().inEventLoop();
-        flush(ctx);
-    }
-
-    private void writeFromStreamChannel(final Http2Frame frame, final ChannelPromise promise, final boolean flush) {
-        assert ctx.executor().inEventLoop();
-        try {
-            ctx.write(frame, promise);
-        } catch (Throwable cause) {
-            promise.tryFailure(cause);
-        }
-        if (flush) {
-            flush(ctx);
-        }
-    }
-
     /**
      * Notifies any child streams of the read completion.
      */
@@ -299,7 +276,7 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
         channelsToFireChildReadComplete.clear();
     }
 
-    final class Http2StreamChannel extends AbstractHttp2StreamChannel {
+    private final class Http2StreamChannel extends AbstractHttp2StreamChannel {
 
         /** {@code true} after the first HEADERS frame has been written **/
         private boolean firstFrameWritten;
@@ -324,7 +301,7 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
         protected void doClose() throws Exception {
             if (!streamClosedWithoutError && isStreamIdValid(stream().id())) {
                 Http2StreamFrame resetFrame = new DefaultHttp2ResetFrame(Http2Error.CANCEL).stream(stream());
-                writeFromStreamChannel(resetFrame, ctx.newPromise(), true);
+                ctx.writeAndFlush(resetFrame);
             }
             super.doClose();
         }
@@ -350,10 +327,9 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
                  */
                 assert !childPromise.isCancellable();
                 ChannelFutureListener childPromiseNotifier = new ChannelPromiseNotifier(childPromise);
-                ChannelPromise parentPromise = ctx.newPromise().addListener(childPromiseNotifier);
-                writeFromStreamChannel(frame, parentPromise, false);
+                ctx.write(frame).addListener(childPromiseNotifier);
             } else if (msg instanceof Http2GoAwayFrame) {
-                writeFromStreamChannel((Http2GoAwayFrame) msg, ctx.newPromise(), false);
+                ctx.write(msg);
             } else {
                 String msgStr = msg.toString();
                 ReferenceCountUtil.release(msg);
@@ -364,7 +340,7 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
 
         @Override
         protected void doWriteComplete() {
-            flushFromStreamChannel();
+            ctx.flush();
         }
 
         @Override
