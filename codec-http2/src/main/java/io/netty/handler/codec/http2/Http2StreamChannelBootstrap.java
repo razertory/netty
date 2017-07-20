@@ -24,7 +24,6 @@ import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelOption;
 import io.netty.channel.ChannelPipeline;
 import io.netty.channel.EventLoop;
-import io.netty.channel.EventLoopGroup;
 import io.netty.util.AttributeKey;
 import io.netty.util.internal.UnstableApi;
 
@@ -68,7 +67,6 @@ public class Http2StreamChannelBootstrap {
     private volatile ParentChannelAndMultiplexCodec channelAndCodec;
 
     private volatile ChannelHandler handler;
-    private volatile EventLoopGroup group;
     private final Map<ChannelOption<?>, Object> options;
     private final Map<AttributeKey<?>, Object> attributes;
 
@@ -82,7 +80,6 @@ public class Http2StreamChannelBootstrap {
         checkNotNull(bootstrap0, "bootstrap must not be null");
         channelAndCodec = bootstrap0.channelAndCodec;
         handler = bootstrap0.handler;
-        group = bootstrap0.group;
         options = synchronizedMap(new LinkedHashMap<ChannelOption<?>, Object>(bootstrap0.options));
         attributes = synchronizedMap(new LinkedHashMap<AttributeKey<?>, Object>(bootstrap0.attributes));
     }
@@ -105,10 +102,7 @@ public class Http2StreamChannelBootstrap {
         Channel parentChannel = channelAndCodec0.parentChannel;
         Http2MultiplexCodec multiplexCodec = channelAndCodec0.multiplexCodec;
 
-        EventLoopGroup group0 = group;
-        group0 = group0 == null ? parentChannel.eventLoop() : group0;
-
-        return multiplexCodec.createStreamChannel(parentChannel, group0, handler, options, attributes, stream);
+        return multiplexCodec.createStreamChannel(parentChannel, handler, options, attributes, stream);
     }
 
     /**
@@ -132,17 +126,6 @@ public class Http2StreamChannelBootstrap {
      */
     public Http2StreamChannelBootstrap handler(ChannelHandler handler) {
         this.handler = checkSharable(checkNotNull(handler, "handler"));
-        return this;
-    }
-
-    /**
-     * Sets the {@link EventLoop} to which channels created with this bootstrap are registered.
-     *
-     * @param group the eventloop or {@code null} if the eventloop of the parent channel should be used.
-     * @return {@code this}
-     */
-    public Http2StreamChannelBootstrap group(EventLoopGroup group) {
-        this.group = group;
         return this;
     }
 
@@ -184,10 +167,6 @@ public class Http2StreamChannelBootstrap {
 
     public ChannelHandler handler() {
         return handler;
-    }
-
-    public EventLoopGroup group() {
-        return group;
     }
 
     public Map<ChannelOption<?>, Object> options() {
