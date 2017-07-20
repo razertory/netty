@@ -356,7 +356,7 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
                         throw new IllegalArgumentException("The first frame must be a headers frame. Was: "
                                 + frame.name());
                     }
-                    childPromise.addListener(this);
+                    childPromise.unvoid().addListener(this);
                     firstFrameWritten = true;
                 }
                 frame.stream(stream());
@@ -402,13 +402,15 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
 
         private Http2StreamFrame validateStreamFrame(Object msg) {
             if (!(msg instanceof Http2StreamFrame)) {
+                String msgString = msg.toString();
                 ReferenceCountUtil.release(msg);
-                throw new IllegalArgumentException("Message must be a Http2StreamFrame: " + msg);
+                throw new IllegalArgumentException("Message must be a Http2StreamFrame: " + msgString);
             }
             Http2StreamFrame frame = (Http2StreamFrame) msg;
             if (frame.stream() != null) {
+                String msgString = msg.toString();
                 ReferenceCountUtil.release(frame);
-                throw new IllegalArgumentException("Stream must not be set on the frame.");
+                throw new IllegalArgumentException("Stream must not be set on the frame: " + msgString);
             }
             return frame;
         }
