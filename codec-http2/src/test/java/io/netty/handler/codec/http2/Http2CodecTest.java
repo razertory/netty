@@ -108,6 +108,7 @@ public class Http2CodecTest {
         }
     }
 
+    /*
     @Test
     public void multipleOutboundStreams() {
         Http2StreamChannelBootstrap b = new Http2StreamChannelBootstrap();
@@ -173,6 +174,7 @@ public class Http2CodecTest {
         assertNotNull(rstFrame);
         assertEquals(3, rstFrame.stream().id());
     }
+    */
 
     @Sharable
     private static class SharableLastInboundHandler extends LastInboundHandler {
