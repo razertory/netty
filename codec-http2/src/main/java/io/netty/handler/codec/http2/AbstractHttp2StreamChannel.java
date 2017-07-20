@@ -76,6 +76,7 @@ abstract class AbstractHttp2StreamChannel extends AbstractChannel {
     private final Http2FrameStream stream;
     private boolean closed;
     private boolean readInProgress;
+    private MessageSizeEstimator.Handle sizeEstimatorHandle;
 
     /**
      * The flow control window of the remote side i.e. the number of bytes this channel is allowed to send to the remote
@@ -200,7 +201,9 @@ abstract class AbstractHttp2StreamChannel extends AbstractChannel {
         if (closed) {
             throw CLOSED_CHANNEL_EXCEPTION;
         }
-        final MessageSizeEstimator.Handle sizeEstimator = config().getMessageSizeEstimator().newHandle();
+        if (sizeEstimatorHandle == null) {
+            sizeEstimatorHandle = config().getMessageSizeEstimator().newHandle();
+        }
         for (;;) {
             final Object msg = in.current();
             if (msg == null) {
@@ -212,7 +215,7 @@ abstract class AbstractHttp2StreamChannel extends AbstractChannel {
                 in.remove();
                 continue;
             }
-            final int bytes = sizeEstimator.size(msg);
+            final int bytes = sizeEstimatorHandle.size(msg);
             /**
              * The flow control window needs to be decrement before stealing the message from the buffer (and thereby
              * decrementing the number of pending bytes). Else, when calling steal() the number of pending bytes could
