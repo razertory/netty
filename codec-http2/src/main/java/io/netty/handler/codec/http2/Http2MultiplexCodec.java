@@ -26,7 +26,6 @@ import io.netty.channel.ChannelOption;
 import io.netty.channel.ChannelPromise;
 import io.netty.channel.ChannelPromiseNotifier;
 import io.netty.channel.EventLoopGroup;
-import io.netty.util.Attribute;
 import io.netty.util.AttributeKey;
 import io.netty.util.ReferenceCountUtil;
 import io.netty.util.ReferenceCounted;
@@ -39,6 +38,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.concurrent.ConcurrentHashMap;
 
 import static io.netty.handler.codec.http2.Http2CodecUtil.isOutboundStream;
 import static io.netty.handler.codec.http2.Http2CodecUtil.isStreamIdValid;
@@ -74,10 +74,11 @@ import static io.netty.handler.codec.http2.Http2CodecUtil.isStreamIdValid;
 @UnstableApi
 public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
 
-    static final AttributeKey<Http2StreamChannel> HTTP2CHANNEL_KEY = AttributeKey
-            .valueOf("Http2MultiplexCodec.childChannel");
-
     private static final InternalLogger LOG = InternalLoggerFactory.getInstance(Http2MultiplexCodec.class);
+
+    // TODO: Use some sane initial capacity.
+    private final Map<Http2FrameStream, Http2StreamChannel> channels =
+            new ConcurrentHashMap<Http2FrameStream, Http2StreamChannel>();
 
     // Visible for testing
     final Http2StreamChannelBootstrap bootstrap;
@@ -104,8 +105,8 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
         this.bootstrap = new Http2StreamChannelBootstrap(bootstrap);
     }
 
-    private static Http2StreamChannel requireChildChannel(Http2FrameStream stream2) {
-        return stream2.attr(HTTP2CHANNEL_KEY).get();
+    private Http2StreamChannel requireChildChannel(Http2FrameStream stream) {
+        return channels.get(stream);
     }
 
     @Override
@@ -119,6 +120,25 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
     @Override
     public void flush(ChannelHandlerContext ctx) {
         ctx.flush();
+    }
+
+    @Override
+    public void userEventTriggered(ChannelHandlerContext ctx, Object evt) throws Exception {
+        if (evt instanceof Http2FrameStreamEvent) {
+            Http2FrameStreamEvent streamEvt = (Http2FrameStreamEvent) evt;
+            switch (streamEvt.state()) {
+                case CLOSED:
+                    onStreamClosed(streamEvt.stream());
+                    break;
+                case ACTIVE:
+                    onStreamActive(streamEvt.stream());
+                    break;
+                default:
+                    throw new Error();
+            }
+        } else {
+            super.userEventTriggered(ctx, evt);
+        }
     }
 
     @Override
@@ -159,22 +179,30 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
     private void channelReadStreamFrame(Http2StreamFrame frame) {
         Http2FrameStream stream = frame.stream();
 
-        Attribute<Http2StreamChannel> channelAttribute = stream.attr(HTTP2CHANNEL_KEY);
-        Http2StreamChannel childChannel = channelAttribute.get();
+        Http2StreamChannel childChannel = channels.get(stream);
+
+        // TODO: Should this happen now that onStreamActive(...) is called when an Http2FrameStreamEvent with state
+        // ACTIVE is received.
         if (childChannel == null) {
-            childChannel = onStreamActive(stream, channelAttribute);
+            childChannel = onStreamActive(stream);
         }
 
         fireChildReadAndRegister(childChannel, frame);
     }
 
-    private Http2StreamChannel onStreamActive(Http2FrameStream stream, Attribute<Http2StreamChannel> attribute) {
-        Http2StreamChannel childChannel = attribute.get();
+    private void onStreamClosed(Http2FrameStream stream) {
+        Http2StreamChannel childChannel = channels.get(stream);
+        if (childChannel != null) {
+            childChannel.streamClosed();
+        }
+    }
+
+    private Http2StreamChannel onStreamActive(Http2FrameStream stream) {
+        Http2StreamChannel childChannel = channels.get(stream);
         if (childChannel == null) {
             ChannelFuture future = bootstrap.connect(stream);
             childChannel = (Http2StreamChannel) future.channel();
-            childChannel.attachStreamCloseListener();
-            attribute.set(childChannel);
+            channels.put(stream, childChannel);
         }
 
         assert !childChannel.isWritable();
@@ -332,18 +360,12 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
 
         Http2StreamChannel(Channel parentChannel, Http2FrameStream stream) {
             super(parentChannel, stream);
-            stream.attr(HTTP2CHANNEL_KEY).set(this);
+            channels.put(stream, this);
         }
 
-        void attachStreamCloseListener() {
-            //stream.attr(HTTP2CHANNEL_KEY).set(this);
-            stream().closeFuture().addListener(new ChannelFutureListener() {
-                @Override
-                public void operationComplete(ChannelFuture future)  {
-                    streamClosedWithoutError = true;
-                    fireChildRead(AbstractHttp2StreamChannel.CLOSE_MESSAGE);
-                }
-            });
+        void streamClosed() {
+            streamClosedWithoutError = true;
+            fireChildRead(AbstractHttp2StreamChannel.CLOSE_MESSAGE);
         }
 
         @Override
@@ -402,7 +424,7 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
         public void operationComplete(ChannelFuture future) throws Exception {
             if (future.isSuccess()) {
                 Http2FrameStream stream = stream();
-                onStreamActive(stream, stream.attr(HTTP2CHANNEL_KEY));
+                onStreamActive(stream);
             } else {
                 pipeline().fireExceptionCaught(future.cause());
                 close();

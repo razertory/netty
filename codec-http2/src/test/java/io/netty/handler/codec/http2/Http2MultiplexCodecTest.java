@@ -19,13 +19,11 @@ import io.netty.buffer.ByteBufUtil;
 import io.netty.buffer.Unpooled;
 import io.netty.buffer.UnpooledByteBufAllocator;
 import io.netty.channel.Channel;
-import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.channel.ChannelOption;
 import io.netty.channel.ChannelOutboundHandlerAdapter;
 import io.netty.channel.ChannelPromise;
-import io.netty.channel.DefaultChannelPromise;
 import io.netty.channel.embedded.EmbeddedChannel;
 import io.netty.handler.codec.http.HttpMethod;
 import io.netty.handler.codec.http.HttpScheme;
@@ -82,8 +80,8 @@ public class Http2MultiplexCodecTest {
         Http2Settings settings = new Http2Settings().initialWindowSize(initialRemoteStreamWindow);
         parentChannel.pipeline().fireChannelRead(new DefaultHttp2SettingsFrame(settings));
 
-        inboundStream = new Http2Stream2Impl(parentChannel).id(3);
-        outboundStream = new Http2Stream2Impl(parentChannel).id(2);
+        inboundStream = new Http2Stream2Impl().id(3);
+        outboundStream = new Http2Stream2Impl().id(2);
     }
 
     @After
@@ -92,9 +90,6 @@ public class Http2MultiplexCodecTest {
             ((LastInboundHandler) childChannelInitializer.handler).finishAndReleaseAll();
         }
         parentChannel.finishAndReleaseAll();
-
-        ((ChannelPromise) inboundStream.closeFuture()).trySuccess();
-        ((ChannelPromise) outboundStream.closeFuture()).trySuccess();
     }
 
     // TODO(buchgr): Thread model of child channel
@@ -130,9 +125,9 @@ public class Http2MultiplexCodecTest {
     @Test
     public void framesShouldBeMultiplexed() {
 
-        Http2FrameStream stream3 = new Http2Stream2Impl(parentChannel).id(3);
-        Http2FrameStream stream5 = new Http2Stream2Impl(parentChannel).id(5);
-        Http2FrameStream stream11 = new Http2Stream2Impl(parentChannel).id(11);
+        Http2FrameStream stream3 = new Http2Stream2Impl().id(3);
+        Http2FrameStream stream5 = new Http2Stream2Impl().id(5);
+        Http2FrameStream stream11 = new Http2Stream2Impl().id(11);
 
         LastInboundHandler inboundHandler3 = streamActiveAndWriteHeaders(stream3);
         LastInboundHandler inboundHandler5 = streamActiveAndWriteHeaders(stream5);
@@ -149,10 +144,6 @@ public class Http2MultiplexCodecTest {
         verifyFramesMultiplexedToCorrectChannel(stream5, inboundHandler5, 2);
         verifyFramesMultiplexedToCorrectChannel(stream3, inboundHandler3, 1);
         verifyFramesMultiplexedToCorrectChannel(stream11, inboundHandler11, 1);
-
-        ((ChannelPromise) stream3.closeFuture()).setSuccess();
-        ((ChannelPromise) stream5.closeFuture()).setSuccess();
-        ((ChannelPromise) stream11.closeFuture()).setSuccess();
     }
 
     @Test
@@ -259,8 +250,7 @@ public class Http2MultiplexCodecTest {
         parentChannel.pipeline().fireChannelReadComplete();
 
         // This will be called by the frame codec.
-        ((ChannelPromise) inboundStream.closeFuture()).setSuccess();
-
+        parentChannel.pipeline().fireUserEventTriggered(Http2FrameStreamEvent.closed(inboundStream));
         parentChannel.runPendingTasks();
 
         assertFalse(inboundHandler.isChannelActive());
@@ -603,19 +593,13 @@ public class Http2MultiplexCodecTest {
 
         @Override
         Http2FrameStream newStream0() {
-            return new Http2Stream2Impl(ctx.channel());
+            return new Http2Stream2Impl();
         }
     }
 
     static final class Http2Stream2Impl extends DefaultAttributeMap implements Http2FrameStream {
 
         private int id = -1;
-        private final ChannelPromise closeFuture;
-
-        Http2Stream2Impl(Channel ch) {
-            closeFuture = new DefaultChannelPromise(ch);
-        }
-
         @Override
         public Http2FrameStream id(int id) {
             this.id = id;
@@ -630,11 +614,6 @@ public class Http2MultiplexCodecTest {
         @Override
         public State state() {
             return State.OPEN;
-        }
-
-        @Override
-        public ChannelFuture closeFuture() {
-            return closeFuture;
         }
     }
 }
