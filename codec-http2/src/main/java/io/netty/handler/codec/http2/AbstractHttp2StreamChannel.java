@@ -72,16 +72,6 @@ abstract class AbstractHttp2StreamChannel extends AbstractChannel {
 
     private final Http2StreamChannelConfig config = new Http2StreamChannelConfig(this);
     private final Queue<Object> inboundBuffer = new ArrayDeque<Object>(4);
-    private final Runnable fireChildReadCompleteTask = new Runnable() {
-        @Override
-        public void run() {
-            if (readInProgress) {
-                readInProgress = false;
-                unsafe().recvBufAllocHandle().readComplete();
-                pipeline().fireChannelReadComplete();
-            }
-        }
-    };
 
     private final Http2FrameStream stream;
     private boolean closed;
@@ -268,19 +258,8 @@ abstract class AbstractHttp2StreamChannel extends AbstractChannel {
      * channel. May be called from any thread.
      */
     protected void fireChildRead(final Object msg) {
-        if (eventLoop().inEventLoop()) {
-            fireChildRead0(msg);
-        } else {
-            eventLoop().execute(new Runnable() {
-                @Override
-                public void run() {
-                    fireChildRead0(msg);
-                }
-            });
-        }
-    }
+        assert eventLoop().inEventLoop();
 
-    private void fireChildRead0(Object msg) {
         if (closed) {
             ReferenceCountUtil.release(msg);
             return;
@@ -292,7 +271,7 @@ abstract class AbstractHttp2StreamChannel extends AbstractChannel {
             RecvByteBufAllocator.Handle allocHandle = unsafe().recvBufAllocHandle();
             readInProgress = doRead0(checkNotNull(msg, "msg"), allocHandle);
             if (!allocHandle.continueReading()) {
-                fireChildReadCompleteTask.run();
+                fireChildReadComplete();
             }
         } else {
             inboundBuffer.add(msg);
@@ -300,10 +279,12 @@ abstract class AbstractHttp2StreamChannel extends AbstractChannel {
     }
 
     protected void fireChildReadComplete() {
-        if (eventLoop().inEventLoop()) {
-            fireChildReadCompleteTask.run();
-        } else {
-            eventLoop().execute(fireChildReadCompleteTask);
+        assert eventLoop().inEventLoop();
+
+        if (readInProgress) {
+            readInProgress = false;
+            unsafe().recvBufAllocHandle().readComplete();
+            pipeline().fireChannelReadComplete();
         }
     }
 
