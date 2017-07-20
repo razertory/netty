@@ -26,6 +26,7 @@ import io.netty.channel.ChannelOption;
 import io.netty.channel.ChannelPromise;
 import io.netty.channel.ChannelPromiseNotifier;
 import io.netty.channel.EventLoopGroup;
+import io.netty.util.Attribute;
 import io.netty.util.AttributeKey;
 import io.netty.util.ReferenceCountUtil;
 import io.netty.util.ReferenceCounted;
@@ -131,18 +132,22 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
             channelReadStreamFrame((Http2StreamFrame) msg);
         } else if (msg instanceof Http2GoAwayFrame) {
             final Http2GoAwayFrame goAwayFrame = (Http2GoAwayFrame) msg;
-            forEachActiveStream(new Http2FrameStreamVisitor() {
-                @Override
-                public boolean visit(Http2FrameStream stream) {
-                    final int streamId = stream.id();
-                    final Http2StreamChannel childChannel = requireChildChannel(stream);
-                    if (streamId > goAwayFrame.lastStreamId() && isOutboundStream(server, streamId)) {
-                        childChannel.pipeline().fireUserEventTriggered(goAwayFrame.retainedDuplicate());
+            try {
+                forEachActiveStream(new Http2FrameStreamVisitor() {
+                    @Override
+                    public boolean visit(Http2FrameStream stream) {
+                        final int streamId = stream.id();
+                        final Http2StreamChannel childChannel = requireChildChannel(stream);
+                        if (streamId > goAwayFrame.lastStreamId() && isOutboundStream(server, streamId)) {
+                            childChannel.pipeline().fireUserEventTriggered(goAwayFrame.retainedDuplicate());
+                        }
+                        return true;
                     }
-                    return true;
-                }
-            });
-            goAwayFrame.release();
+                });
+            } finally {
+                // We need to ensure we release the goAwayFrame.
+                goAwayFrame.release();
+            }
         } else if (msg instanceof Http2SettingsFrame) {
             Http2Settings settings = ((Http2SettingsFrame) msg).settings();
             if (settings.initialWindowSize() != null) {
@@ -154,36 +159,28 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
     private void channelReadStreamFrame(Http2StreamFrame frame) {
         Http2FrameStream stream = frame.stream();
 
-        if (!stream.hasAttr(HTTP2CHANNEL_KEY)) {
-            onStreamActive(stream);
+        Attribute<Http2StreamChannel> channelAttribute = stream.attr(HTTP2CHANNEL_KEY);
+        Http2StreamChannel childChannel = channelAttribute.get();
+        if (childChannel == null) {
+            childChannel = onStreamActive(stream, channelAttribute);
         }
-
-        Http2StreamChannel childChannel = requireChildChannel(stream);
 
         fireChildReadAndRegister(childChannel, frame);
     }
 
-    private void onStreamActive(Http2FrameStream stream) {
-        final Http2StreamChannel childChannel;
-        if (!stream.hasAttr(HTTP2CHANNEL_KEY)) {
+    private Http2StreamChannel onStreamActive(Http2FrameStream stream, Attribute<Http2StreamChannel> attribute) {
+        Http2StreamChannel childChannel = attribute.get();
+        if (childChannel == null) {
             ChannelFuture future = bootstrap.connect(stream);
             childChannel = (Http2StreamChannel) future.channel();
-            stream.attr(HTTP2CHANNEL_KEY).set(childChannel);
-        } else {
-            childChannel = requireChildChannel(stream);
+            childChannel.attachStreamCloseListener();
+            attribute.set(childChannel);
         }
-
-        stream.closeFuture().addListener(new ChannelFutureListener() {
-            @Override
-            public void operationComplete(ChannelFuture future)  {
-                childChannel.streamClosedWithoutError = true;
-                childChannel.fireChildRead(AbstractHttp2StreamChannel.CLOSE_MESSAGE);
-            }
-        });
 
         assert !childChannel.isWritable();
         childChannel.incrementOutboundFlowControlWindow(initialOutboundStreamWindow);
         childChannel.pipeline().fireChannelWritabilityChanged();
+        return childChannel;
     }
 
     @Override
@@ -338,6 +335,17 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
             stream.attr(HTTP2CHANNEL_KEY).set(this);
         }
 
+        void attachStreamCloseListener() {
+            //stream.attr(HTTP2CHANNEL_KEY).set(this);
+            stream().closeFuture().addListener(new ChannelFutureListener() {
+                @Override
+                public void operationComplete(ChannelFuture future)  {
+                    streamClosedWithoutError = true;
+                    fireChildRead(AbstractHttp2StreamChannel.CLOSE_MESSAGE);
+                }
+            });
+        }
+
         @Override
         protected void doClose() throws Exception {
             if (!streamClosedWithoutError && isStreamIdValid(stream().id())) {
@@ -393,7 +401,8 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
         @Override
         public void operationComplete(ChannelFuture future) throws Exception {
             if (future.isSuccess()) {
-                onStreamActive(stream());
+                Http2FrameStream stream = stream();
+                onStreamActive(stream, stream.attr(HTTP2CHANNEL_KEY));
             } else {
                 pipeline().fireExceptionCaught(future.cause());
                 close();
