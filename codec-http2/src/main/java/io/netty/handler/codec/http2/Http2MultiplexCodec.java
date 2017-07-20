@@ -86,7 +86,6 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
     private final boolean server;
     // Visible for testing
     ChannelHandlerContext ctx;
-    private volatile Runnable flushTask;
 
     private int initialOutboundStreamWindow = Http2CodecUtil.DEFAULT_WINDOW_SIZE;
 
@@ -327,10 +326,10 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
     final class Http2StreamChannel extends AbstractHttp2StreamChannel {
 
         /** {@code true} after the first HEADERS frame has been written **/
-        boolean firstFrameWritten;
+        private boolean firstFrameWritten;
 
         /** {@code true} if a close without an error was initiated **/
-        boolean streamClosedWithoutError;
+        private boolean streamClosedWithoutError;
 
         /** {@code true} if stream is in {@link Http2MultiplexCodec#channelsToFireChildReadComplete}. **/
         boolean inStreamsToFireChildReadComplete;
@@ -380,8 +379,10 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
             } else if (msg instanceof Http2GoAwayFrame) {
                 writeFromStreamChannel((Http2GoAwayFrame) msg, ctx.newPromise(), false);
             } else {
+                String msgStr = msg.toString();
                 ReferenceCountUtil.release(msg);
-                throw new IllegalArgumentException("Message must be an Http2GoAwayFrame or Http2StreamFrame: " + msg);
+                throw new IllegalArgumentException(
+                        "Message must be an Http2GoAwayFrame or Http2StreamFrame: " + msgStr);
             }
         }
 
