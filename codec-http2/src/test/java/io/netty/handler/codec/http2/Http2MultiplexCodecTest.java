@@ -302,7 +302,6 @@ public class Http2MultiplexCodecTest {
         childChannelInitializer.handler = inboundHandler;
 
         AbstractHttp2StreamChannel childChannel = (AbstractHttp2StreamChannel) newChildChannel();
-        assertThat(childChannel, Matchers.instanceOf(Http2MultiplexCodec.Http2StreamChannel.class));
         assertTrue(childChannel.isActive());
         assertTrue(inboundHandler.isChannelActive());
 
