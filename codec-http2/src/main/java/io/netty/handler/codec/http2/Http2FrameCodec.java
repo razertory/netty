@@ -16,7 +16,6 @@
 package io.netty.handler.codec.http2;
 
 import io.netty.buffer.ByteBuf;
-import io.netty.channel.Channel;
 import io.netty.channel.ChannelDuplexHandler;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelFutureListener;
@@ -30,7 +29,6 @@ import io.netty.handler.codec.http2.StreamBufferingEncoder.Http2ChannelClosedExc
 import io.netty.handler.codec.http2.StreamBufferingEncoder.Http2GoAwayException;
 import io.netty.handler.codec.UnsupportedMessageTypeException;
 import io.netty.handler.codec.http.HttpServerUpgradeHandler.UpgradeEvent;
-import io.netty.util.DefaultAttributeMap;
 import io.netty.util.ReferenceCountUtil;
 
 import io.netty.util.ReferenceCounted;
@@ -58,9 +56,6 @@ import static io.netty.handler.codec.http2.Http2CodecUtil.isStreamIdValid;
  * The frame codec delivers and writes frames for active streams. An active stream is closed when either side sends a
  * {@code RST_STREAM} frame or both sides send a frame with the {@code END_STREAM} flag set. Each
  * {@link Http2StreamFrame} has a {@link Http2FrameStream} object attached that uniquely identifies a particular stream.
- *
- * <p>Application specific state can be maintained by attaching a custom object to a stream via
- * {@link Http2FrameStream#attr(io.netty.util.AttributeKey)}.
  *
  * <p>{@link Http2StreamFrame}s read from the channel always a {@link Http2FrameStream} object set, while when writing a
  * {@link Http2StreamFrame} the application code needs to set a {@link Http2FrameStream} object using
@@ -237,7 +232,7 @@ public class Http2FrameCodec extends ChannelDuplexHandler {
             throw new IllegalStateException("Channel handler not added to a channel pipeline.");
         }
 
-        return new Http2Stream2Impl(ctx0.channel());
+        return new Http2Stream2Impl(null);
     }
 
     /**
@@ -472,7 +467,7 @@ public class Http2FrameCodec extends ChannelDuplexHandler {
                         connectionStream.setProperty(streamKey, stream);
                         stream.legacyStream = connectionStream;
                     } else {
-                        stream.setClosed();
+                        ctx.fireUserEventTriggered(Http2FrameStreamEvent.closed(stream));
                     }
                 }
             });
@@ -482,6 +477,7 @@ public class Http2FrameCodec extends ChannelDuplexHandler {
                                             headersFrame.endStream(), promise);
     }
 
+    // TODO: Should we maybe also send Http2FrameStreamEvents for all the other stream state changes ?
     private final class ConnectionListener extends Http2ConnectionAdapter {
 
         @Override
@@ -490,16 +486,16 @@ public class Http2FrameCodec extends ChannelDuplexHandler {
                 return;
             }
 
-            Http2Stream2Impl stream2 = new Http2Stream2Impl(ctx.channel()).id(stream.id());
-            stream2.legacyStream = stream;
+            Http2Stream2Impl stream2 = new Http2Stream2Impl(stream).id(stream.id());
             stream.setProperty(streamKey, stream2);
+            ctx.fireUserEventTriggered(Http2FrameStreamEvent.active(stream2));
         }
 
         @Override
         public void onStreamClosed(Http2Stream stream) {
             Http2Stream2Impl stream2 = stream.getProperty(streamKey);
             if (stream2 != null) {
-                stream2.setClosed();
+                ctx.fireUserEventTriggered(Http2FrameStreamEvent.closed(stream2));
             }
         }
 
@@ -625,14 +621,13 @@ public class Http2FrameCodec extends ChannelDuplexHandler {
      * {@link Http2FrameStream} implementation.
      */
     // TODO(buchgr): Merge Http2Stream2 and Http2Stream.
-    static final class Http2Stream2Impl extends DefaultAttributeMap implements Http2FrameStream {
+    static final class Http2Stream2Impl implements Http2FrameStream {
 
         private volatile int id = -1;
         private volatile Http2Stream legacyStream;
-        private final ChannelPromise promise;
 
-        Http2Stream2Impl(Channel channel) {
-            promise = channel.newPromise();
+        Http2Stream2Impl(Http2Stream legacyStream) {
+            this.legacyStream = legacyStream;
         }
 
         @Override
@@ -655,18 +650,6 @@ public class Http2FrameCodec extends ChannelDuplexHandler {
             return stream0 == null
                     ? State.IDLE
                     : stream0.state();
-        }
-
-        @Override
-        public ChannelFuture closeFuture() {
-            if (state() == State.IDLE) {
-                throw new IllegalStateException("This method may not be called on IDLE streams.");
-            }
-            return promise;
-        }
-
-        void setClosed() {
-            promise.trySuccess();
         }
 
         @Override

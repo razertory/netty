@@ -16,18 +16,14 @@
 
 package io.netty.handler.codec.http2;
 
-import io.netty.channel.ChannelFuture;
 import io.netty.handler.codec.http2.Http2Stream.State;
-import io.netty.util.Attribute;
-import io.netty.util.AttributeKey;
-import io.netty.util.AttributeMap;
 import io.netty.util.internal.UnstableApi;
 
 /**
  * A single stream within a HTTP/2 connection. To be used with the {@link Http2FrameCodec}.
  */
 @UnstableApi
-public interface Http2FrameStream extends AttributeMap {
+public interface Http2FrameStream {
 
     /**
      * The stream with identifier 0, representing the HTTP/2 connection.
@@ -47,21 +43,6 @@ public interface Http2FrameStream extends AttributeMap {
         @Override
         public State state() {
             throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public ChannelFuture closeFuture() {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public <T> Attribute<T> attr(AttributeKey<T> key) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public <T> boolean hasAttr(AttributeKey<T> key) {
-            return false;
         }
     };
 
@@ -85,14 +66,4 @@ public interface Http2FrameStream extends AttributeMap {
      * Returns the state of this stream.
      */
     State state();
-
-    /**
-     * A {@link ChannelFuture} that will complete when the stream or the {@link io.netty.channel.Channel} are closed
-     * (whatever happens first).
-     *
-     * <p><strong>NOTE:</strong> It's not safe to call this method on a stream in {@link State#IDLE} state.
-     *
-     * @throws IllegalStateException    if this method is called on a stream in {@link State#IDLE} state.
-     */
-    ChannelFuture closeFuture();
 }

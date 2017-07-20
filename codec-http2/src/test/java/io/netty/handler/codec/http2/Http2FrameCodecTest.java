@@ -358,6 +358,8 @@ public class Http2FrameCodecTest {
         StreamException streamEx = new StreamException(3, Http2Error.INTERNAL_ERROR, "foo");
         frameCodec.connectionHandler().onError(http2HandlerCtx, streamEx);
 
+        Http2FrameStreamEvent event = inboundHandler.readInboundMessageOrUserEvent();
+        assertEquals(Http2FrameStreamEvent.State.ACTIVE, event.state());
         Http2HeadersFrame headersFrame = inboundHandler.readInboundMessageOrUserEvent();
         assertNotNull(headersFrame);
 
@@ -470,8 +472,6 @@ public class Http2FrameCodecTest {
                     public void operationComplete(ChannelFuture future) throws Exception {
                         assertTrue(future.isSuccess());
                         assertTrue(isStreamIdValid(stream.id()));
-                        assertFalse(stream.closeFuture().isDone());
-
                         listenerExecuted.setSuccess(null);
                     }
                 }
