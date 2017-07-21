@@ -15,11 +15,9 @@
  */
 package io.netty.handler.codec.http2;
 
-import io.netty.channel.Channel;
 import io.netty.channel.ChannelDuplexHandler;
 import io.netty.channel.ChannelHandler;
 import io.netty.channel.ChannelHandlerContext;
-import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.util.internal.UnstableApi;
 
 /**
@@ -30,17 +28,15 @@ import io.netty.util.internal.UnstableApi;
 public final class Http2Codec extends ChannelDuplexHandler {
     private final Http2FrameCodec frameCodec;
     private final Http2MultiplexCodec multiplexCodec;
-    private final ChannelHandler childHandler;
 
-    Http2Codec(boolean server, ChannelHandler childHandler, Http2FrameWriter frameWriter,
+    Http2Codec(boolean server, ChannelHandler inboundStreamHandler, Http2FrameWriter frameWriter,
                Http2FrameLogger frameLogger, Http2Settings initialSettings) {
         Http2FrameCodecBuilder frameBuilder = server
                 ? Http2FrameCodecBuilder.forServer()
                 : Http2FrameCodecBuilder.forClient();
         frameBuilder.frameWriter(frameWriter).frameLogger(frameLogger).initialSettings(initialSettings);
         frameCodec = frameBuilder.build();
-        multiplexCodec = new Http2MultiplexCodec(server);
-        this.childHandler = childHandler;
+        multiplexCodec = new Http2MultiplexCodec(server, inboundStreamHandler);
     }
 
     Http2FrameCodec frameCodec() {
@@ -51,17 +47,6 @@ public final class Http2Codec extends ChannelDuplexHandler {
     public void handlerAdded(ChannelHandlerContext ctx) throws Exception {
         ctx.pipeline().addBefore(ctx.executor(), ctx.name(), null, frameCodec);
         ctx.pipeline().addBefore(ctx.executor(), ctx.name(), null, multiplexCodec);
-        ctx.pipeline().addBefore(ctx.executor(), ctx.name(), null, new ChannelInboundHandlerAdapter() {
-            @Override
-            public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
-                if (msg instanceof Channel) {
-                    ((Channel) msg).pipeline().addLast(childHandler);
-                } else {
-                    ctx.fireChannelRead(msg);
-                }
-            }
-        });
-
         ctx.pipeline().remove(this);
     }
 }
