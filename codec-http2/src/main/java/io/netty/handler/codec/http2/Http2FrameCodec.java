@@ -194,13 +194,10 @@ public class Http2FrameCodec extends ChannelDuplexHandler {
         return http2Handler;
     }
 
-    /**
-     * Creates a new outbound/local stream.
-     *
-     * <p>This method may only be called after the handler has been added to a {@link io.netty.channel.ChannelPipeline}.
-     *
-     * <p>This method is thread-safe.
-     */
+    public Http2FrameCodec(boolean server) {
+        this(server, new DefaultHttp2FrameWriter(), null, new Http2Settings());
+    }
+
     public Http2FrameCodec(boolean server, Http2FrameLogger frameLogger) {
         this(server, new DefaultHttp2FrameWriter(), frameLogger, Http2Settings.defaultSettings());
     }
@@ -210,14 +207,18 @@ public class Http2FrameCodec extends ChannelDuplexHandler {
                     Http2Settings initialSettings) {
         // TODO(scott): configure maxReservedStreams when API is more finalized.
         Http2Connection connection = new DefaultHttp2Connection(server);
-        frameWriter = new Http2OutboundFrameLogger(frameWriter, frameLogger);
-        Http2ConnectionEncoder encoder = new DefaultHttp2ConnectionEncoder(connection, frameWriter);
+
         Long maxHeaderListSize = initialSettings.maxHeaderListSize();
         Http2FrameReader frameReader = new DefaultHttp2FrameReader(maxHeaderListSize == null ?
                 new DefaultHttp2HeadersDecoder(true) :
                 new DefaultHttp2HeadersDecoder(true, maxHeaderListSize));
-        Http2FrameReader reader = new Http2InboundFrameLogger(frameReader, frameLogger);
-        Http2ConnectionDecoder decoder = new DefaultHttp2ConnectionDecoder(connection, encoder, reader);
+
+        if (frameLogger != null) {
+            frameWriter = new Http2OutboundFrameLogger(frameWriter, frameLogger);
+            frameReader = new Http2InboundFrameLogger(frameReader, frameLogger);
+        }
+        Http2ConnectionEncoder encoder = new DefaultHttp2ConnectionEncoder(connection, frameWriter);
+        Http2ConnectionDecoder decoder = new DefaultHttp2ConnectionDecoder(connection, encoder, frameReader);
         decoder.frameListener(new FrameListener());
         http2Handler = new InternalHttp2ConnectionHandler(decoder, encoder, initialSettings);
         http2Handler.connection().addListener(new ConnectionListener());
@@ -225,6 +226,13 @@ public class Http2FrameCodec extends ChannelDuplexHandler {
         this.server = server;
     }
 
+    /**
+     * Creates a new outbound/local stream.
+     *
+     * <p>This method may only be called after the handler has been added to a {@link io.netty.channel.ChannelPipeline}.
+     *
+     * <p>This method is thread-safe.
+     */
     // TODO(buchgr): Discuss: Should this method be thread safe?
     Http2FrameStream newStream() {
         ChannelHandlerContext ctx0 = ctx;
@@ -474,7 +482,7 @@ public class Http2FrameCodec extends ChannelDuplexHandler {
             promise.addListener(promiseNotifier);
         }
         http2Handler.encoder().writeHeaders(http2HandlerCtx, streamId, headersFrame.headers(), headersFrame.padding(),
-                                            headersFrame.endStream(), promise);
+                                            headersFrame.isEndStream(), promise);
     }
 
     // TODO: Should we maybe also send Http2FrameStreamEvents for all the other stream state changes ?

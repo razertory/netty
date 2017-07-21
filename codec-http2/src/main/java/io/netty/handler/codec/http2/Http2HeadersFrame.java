@@ -36,5 +36,5 @@ public interface Http2HeadersFrame extends Http2StreamFrame {
     /**
      * Returns {@code true} if the END_STREAM flag ist set.
      */
-    boolean endStream();
+    boolean isEndStream();
 }

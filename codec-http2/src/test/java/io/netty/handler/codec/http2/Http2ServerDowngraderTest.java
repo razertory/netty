@@ -54,7 +54,7 @@ public class Http2ServerDowngraderTest {
 
         Http2HeadersFrame headersFrame = ch.readOutbound();
         assertThat(headersFrame.headers().status().toString(), is("200"));
-        assertTrue(headersFrame.endStream());
+        assertTrue(headersFrame.isEndStream());
 
         assertThat(ch.readOutbound(), is(nullValue()));
         assertFalse(ch.finish());
@@ -68,7 +68,7 @@ public class Http2ServerDowngraderTest {
 
         Http2HeadersFrame headersFrame = ch.readOutbound();
         assertThat(headersFrame.headers().status().toString(), is("200"));
-        assertFalse(headersFrame.endStream());
+        assertFalse(headersFrame.isEndStream());
 
         Http2DataFrame dataFrame = ch.readOutbound();
         try {
@@ -92,11 +92,11 @@ public class Http2ServerDowngraderTest {
 
         Http2HeadersFrame headersFrame = ch.readOutbound();
         assertThat(headersFrame.headers().status().toString(), is("200"));
-        assertFalse(headersFrame.endStream());
+        assertFalse(headersFrame.isEndStream());
 
         Http2HeadersFrame trailersFrame = ch.readOutbound();
         assertThat(trailersFrame.headers().get("key").toString(), is("value"));
-        assertTrue(trailersFrame.endStream());
+        assertTrue(trailersFrame.isEndStream());
 
         assertThat(ch.readOutbound(), is(nullValue()));
         assertFalse(ch.finish());
@@ -113,7 +113,7 @@ public class Http2ServerDowngraderTest {
 
         Http2HeadersFrame headersFrame = ch.readOutbound();
         assertThat(headersFrame.headers().status().toString(), is("200"));
-        assertFalse(headersFrame.endStream());
+        assertFalse(headersFrame.isEndStream());
 
         Http2DataFrame dataFrame = ch.readOutbound();
         try {
@@ -125,7 +125,7 @@ public class Http2ServerDowngraderTest {
 
         Http2HeadersFrame trailersFrame = ch.readOutbound();
         assertThat(trailersFrame.headers().get("key").toString(), is("value"));
-        assertTrue(trailersFrame.endStream());
+        assertTrue(trailersFrame.isEndStream());
 
         assertThat(ch.readOutbound(), is(nullValue()));
         assertFalse(ch.finish());
@@ -139,7 +139,7 @@ public class Http2ServerDowngraderTest {
 
         Http2HeadersFrame headersFrame = ch.readOutbound();
         assertThat(headersFrame.headers().status().toString(), is("200"));
-        assertFalse(headersFrame.endStream());
+        assertFalse(headersFrame.isEndStream());
 
         assertThat(ch.readOutbound(), is(nullValue()));
         assertFalse(ch.finish());
@@ -211,7 +211,7 @@ public class Http2ServerDowngraderTest {
 
         Http2HeadersFrame headerFrame = ch.readOutbound();
         assertThat(headerFrame.headers().get("key").toString(), is("value"));
-        assertTrue(headerFrame.endStream());
+        assertTrue(headerFrame.isEndStream());
 
         assertThat(ch.readOutbound(), is(nullValue()));
         assertFalse(ch.finish());
@@ -236,7 +236,7 @@ public class Http2ServerDowngraderTest {
 
         Http2HeadersFrame headerFrame = ch.readOutbound();
         assertThat(headerFrame.headers().get("key").toString(), is("value"));
-        assertTrue(headerFrame.endStream());
+        assertTrue(headerFrame.isEndStream());
 
         assertThat(ch.readOutbound(), is(nullValue()));
         assertFalse(ch.finish());
