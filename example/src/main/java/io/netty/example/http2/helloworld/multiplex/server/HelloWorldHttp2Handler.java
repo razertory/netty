@@ -82,7 +82,7 @@ public class HelloWorldHttp2Handler extends ChannelDuplexHandler {
      */
     private static void onHeadersRead(ChannelHandlerContext ctx, Http2HeadersFrame headers)
             throws Exception {
-        if (headers.endStream()) {
+        if (headers.isEndStream()) {
             ByteBuf content = ctx.alloc().buffer();
             content.writeBytes(RESPONSE_BYTES.duplicate());
             ByteBufUtil.writeAscii(content, " - via HTTP/2");

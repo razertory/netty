@@ -225,7 +225,7 @@ public class Http2FrameCodecTest {
 
         Http2HeadersFrame inboundHeaders = inboundHandler.readInbound();
         assertNotNull(inboundHeaders);
-        assertTrue(inboundHeaders.endStream());
+        assertTrue(inboundHeaders.isEndStream());
 
         Http2FrameStream stream2 = inboundHeaders.stream();
         assertNotNull(stream2);

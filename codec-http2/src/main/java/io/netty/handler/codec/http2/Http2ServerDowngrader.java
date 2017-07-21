@@ -70,7 +70,7 @@ public class Http2ServerDowngrader extends MessageToMessageCodec<Http2StreamFram
             Http2HeadersFrame headersFrame = (Http2HeadersFrame) frame;
             Http2Headers headers = headersFrame.headers();
 
-            if (headersFrame.endStream()) {
+            if (headersFrame.isEndStream()) {
                 if (headers.method() == null) {
                     LastHttpContent last = new DefaultLastHttpContent(Unpooled.EMPTY_BUFFER, validateHeaders);
                     HttpConversionUtil.addHttp2ToHttpHeaders(id, headers, last.trailingHeaders(),
