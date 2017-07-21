@@ -113,6 +113,20 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
     private final boolean server;
     private final ChannelHandler inboundStreamHandler;
 
+    private final ChannelFutureListener firstFrameWriteListener = new ChannelFutureListener() {
+        @Override
+        public void operationComplete(ChannelFuture future) throws Exception {
+            Http2StreamChannel channel = (Http2StreamChannel) future.channel();
+            if (future.isSuccess()) {
+                Http2FrameStream stream = channel.stream();
+                onStreamActive(stream);
+            } else {
+                channel.pipeline().fireExceptionCaught(future.cause());
+                channel.close();
+            }
+        }
+    };
+
     // Visible for testing
     ChannelHandlerContext ctx;
 
@@ -258,7 +272,7 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
     }
 
     private Http2StreamChannel newStreamChannel(Http2FrameStream stream) {
-        Http2StreamChannel childChannel = new Http2StreamChannel(ctx.channel(), stream);
+        Http2StreamChannel childChannel = new Http2StreamChannel(ctx, stream, firstFrameWriteListener);
         channels.put(stream, childChannel);
         return childChannel;
     }
@@ -304,7 +318,10 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
         channelsToFireChildReadComplete.clear();
     }
 
-    private final class Http2StreamChannel extends AbstractHttp2StreamChannel {
+    private static final class Http2StreamChannel extends AbstractHttp2StreamChannel {
+
+        private final ChannelHandlerContext ctx;
+        private final ChannelFutureListener firstFrameWriteListener;
 
         /** {@code true} after the first HEADERS frame has been written **/
         private boolean firstFrameWritten;
@@ -315,8 +332,11 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
         /** {@code true} if stream is in {@link Http2MultiplexCodec#channelsToFireChildReadComplete}. **/
         boolean inStreamsToFireChildReadComplete;
 
-        Http2StreamChannel(Channel parentChannel, Http2FrameStream stream) {
-            super(parentChannel, stream);
+        Http2StreamChannel(ChannelHandlerContext ctx, Http2FrameStream stream,
+                           ChannelFutureListener firstFrameWriteListener) {
+            super(ctx.channel(), stream);
+            this.ctx = ctx;
+            this.firstFrameWriteListener = firstFrameWriteListener;
         }
 
         void streamClosed() {
@@ -342,7 +362,7 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
                         throw new IllegalArgumentException("The first frame must be a headers frame. Was: "
                                 + frame.name());
                     }
-                    childPromise.unvoid().addListener(new FirstWriteChannelFutureListener());
+                    childPromise.addListener(firstFrameWriteListener);
                     firstFrameWritten = true;
                 }
                 frame.stream(stream());
@@ -375,7 +395,7 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
             ctx.write(new DefaultHttp2WindowUpdateFrame(bytes).stream(stream()));
         }
 
-        private Http2StreamFrame validateStreamFrame(Object msg) {
+        private static Http2StreamFrame validateStreamFrame(Object msg) {
             if (!(msg instanceof Http2StreamFrame)) {
                 String msgString = msg.toString();
                 ReferenceCountUtil.release(msg);
@@ -388,19 +408,6 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
                 throw new IllegalArgumentException("Stream must not be set on the frame: " + msgString);
             }
             return frame;
-        }
-
-        private final class FirstWriteChannelFutureListener implements ChannelFutureListener {
-            @Override
-            public void operationComplete(ChannelFuture future) throws Exception {
-                if (future.isSuccess()) {
-                    Http2FrameStream stream = stream();
-                    onStreamActive(stream);
-                } else {
-                    pipeline().fireExceptionCaught(future.cause());
-                    close();
-                }
-            }
         }
     }
 }
