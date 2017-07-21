@@ -147,6 +147,13 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
     }
 
     @Override
+    public void handlerRemoved(ChannelHandlerContext ctx) throws Exception {
+        channels.clear();
+        channelsToFireChildReadComplete.clear();
+        super.handlerRemoved(ctx);
+    }
+
+    @Override
     public void userEventTriggered(ChannelHandlerContext ctx, Object evt) throws Exception {
         if (evt instanceof Http2FrameStreamEvent) {
             Http2FrameStreamEvent streamEvt = (Http2FrameStreamEvent) evt;
