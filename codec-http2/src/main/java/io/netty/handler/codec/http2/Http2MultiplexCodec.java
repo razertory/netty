@@ -516,22 +516,24 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
             if (closed) {
                 throw CLOSED_CHANNEL_EXCEPTION;
             }
-            if (sizeEstimatorHandle == null) {
-                sizeEstimatorHandle = config().getMessageSizeEstimator().newHandle();
-            }
-            for (;;) {
-                final Object msg = in.current();
-                if (msg == null) {
-                    break;
+
+            try {
+                if (sizeEstimatorHandle == null) {
+                    sizeEstimatorHandle = config().getMessageSizeEstimator().newHandle();
                 }
-                // TODO(buchgr): Detecting cancellation relies on ChannelOutboundBuffer internals. NOT COOL!
-                if (msg == Unpooled.EMPTY_BUFFER /* The write was cancelled. */
+                for (;;) {
+                    final Object msg = in.current();
+                    if (msg == null) {
+                        break;
+                    }
+                    // TODO(buchgr): Detecting cancellation relies on ChannelOutboundBuffer internals. NOT COOL!
+                    if (msg == Unpooled.EMPTY_BUFFER /* The write was cancelled. */
                         /* Write to trigger writability after window update. */
-                        || msg == REEVALUATE_WRITABILITY_MESSAGE) {
-                    in.remove();
-                    continue;
-                }
-                final int bytes = sizeEstimatorHandle.size(msg);
+                            || msg == REEVALUATE_WRITABILITY_MESSAGE) {
+                        in.remove();
+                        continue;
+                    }
+                    final int bytes = sizeEstimatorHandle.size(msg);
                 /*
                  * The flow control window needs to be decrement before stealing the message from the buffer (and
                  * thereby decrementing the number of pending bytes). Else, when calling steal() the number of pending
@@ -541,19 +543,22 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
                  * This code must never trigger a writability change. Only reading window updates or channel writes may
                  * change the channel's writability.
                  */
-                incrementOutboundFlowControlWindow(-bytes);
-                final ChannelPromise promise = in.steal();
-                if (bytes > 0) {
-                    promise.addListener(new ReturnFlowControlWindowOnFailureListener(bytes));
+                    incrementOutboundFlowControlWindow(-bytes);
+                    final ChannelPromise promise = in.steal();
+                    if (bytes > 0) {
+                        promise.addListener(new ReturnFlowControlWindowOnFailureListener(bytes));
+                    }
+                    // TODO(buchgr): Should we also the change the writability if END_STREAM is set?
+                    try {
+                        doWrite(msg, promise);
+                    } catch (Throwable t) {
+                        promise.tryFailure(t);
+                    }
                 }
-                // TODO(buchgr): Should we also the change the writability if END_STREAM is set?
-                try {
-                    doWrite(msg, promise);
-                } catch (Throwable t) {
-                    promise.tryFailure(t);
-                }
+            } finally {
+                // ensure we always flush even if the write loop throws.
+                ctx.flush();
             }
-            doWriteComplete();
         }
 
         /**
@@ -681,10 +686,6 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
                 throw new IllegalArgumentException(
                         "Message must be an Http2GoAwayFrame or Http2StreamFrame: " + msgStr);
             }
-        }
-
-        private void doWriteComplete() {
-            ctx.flush();
         }
 
         private void bytesConsumed(final int bytes) {
