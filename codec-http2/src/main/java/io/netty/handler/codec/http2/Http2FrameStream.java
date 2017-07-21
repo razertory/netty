@@ -31,11 +31,6 @@ public interface Http2FrameStream {
     Http2FrameStream CONNECTION_STREAM = new Http2FrameStream() {
 
         @Override
-        public Http2FrameStream id(int id) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
         public int id() {
             return 0;
         }
@@ -45,14 +40,6 @@ public interface Http2FrameStream {
             throw new UnsupportedOperationException();
         }
     };
-
-    /**
-     * Set the stream identifier to a value greater than zero.
-     *
-     * <p>This method must never be called by user code, except it might be useful in tests. This method may be called
-     * at most once.
-     */
-    Http2FrameStream id(int id);
 
     /**
      * Returns the stream identifier.
