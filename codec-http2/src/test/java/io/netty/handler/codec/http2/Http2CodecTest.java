@@ -21,6 +21,7 @@ import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.Channel;
+import io.netty.channel.ChannelHandler;
 import io.netty.channel.ChannelHandler.Sharable;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInitializer;
@@ -108,18 +109,19 @@ public class Http2CodecTest {
         }
     }
 
-    /*
+    private Http2MultiplexCodec.Http2StreamChannel newOutboundStream(ChannelHandler handler) {
+        return (Http2MultiplexCodec.Http2StreamChannel) clientChannel.pipeline().get(Http2MultiplexCodec.class)
+                .newOutboundStream(handler).syncUninterruptibly().channel();
+    }
+
     @Test
     public void multipleOutboundStreams() {
-        Http2StreamChannelBootstrap b = new Http2StreamChannelBootstrap();
-        b.parentChannel(clientChannel).handler(new TestChannelInitializer());
-
-        Channel childChannel1 = b.connect().syncUninterruptibly().channel();
+        Http2MultiplexCodec.Http2StreamChannel childChannel1 = newOutboundStream(new TestChannelInitializer());
         assertTrue(childChannel1.isActive());
-        assertFalse(isStreamIdValid(((AbstractHttp2StreamChannel) childChannel1).stream().id()));
-        Channel childChannel2 = b.connect().channel();
+        assertFalse(isStreamIdValid(childChannel1.stream().id()));
+        Http2MultiplexCodec.Http2StreamChannel childChannel2 = newOutboundStream(new TestChannelInitializer());
         assertTrue(childChannel2.isActive());
-        assertFalse(isStreamIdValid(((AbstractHttp2StreamChannel) childChannel2).stream().id()));
+        assertFalse(isStreamIdValid(childChannel2.stream().id()));
 
         Http2Headers headers1 = new DefaultHttp2Headers();
         Http2Headers headers2 = new DefaultHttp2Headers();
@@ -136,8 +138,8 @@ public class Http2CodecTest {
         assertNotNull(headersFrame1);
         assertEquals(5, headersFrame1.stream().id());
 
-        assertEquals(3, ((AbstractHttp2StreamChannel) childChannel2).stream().id());
-        assertEquals(5, ((AbstractHttp2StreamChannel) childChannel1).stream().id());
+        assertEquals(3, childChannel2.stream().id());
+        assertEquals(5, childChannel1.stream().id());
 
         childChannel1.close();
         childChannel2.close();
@@ -145,9 +147,7 @@ public class Http2CodecTest {
 
     @Test
     public void createOutboundStream() {
-        Http2StreamChannelBootstrap b = new Http2StreamChannelBootstrap();
-        Channel childChannel = b.parentChannel(clientChannel).handler(new TestChannelInitializer())
-                                       .connect().syncUninterruptibly().channel();
+        Channel childChannel = newOutboundStream(new TestChannelInitializer());
         assertTrue(childChannel.isRegistered());
         assertTrue(childChannel.isActive());
 
@@ -174,7 +174,6 @@ public class Http2CodecTest {
         assertNotNull(rstFrame);
         assertEquals(3, rstFrame.stream().id());
     }
-    */
 
     @Sharable
     private static class SharableLastInboundHandler extends LastInboundHandler {

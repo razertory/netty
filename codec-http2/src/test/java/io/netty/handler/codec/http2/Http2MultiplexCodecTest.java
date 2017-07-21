@@ -188,10 +188,11 @@ public class Http2MultiplexCodecTest {
         verifyFramesMultiplexedToCorrectChannel(inboundStream, inboundHandler, 2);
     }
 
-    private Channel newChildChannel() {
+    private Channel newOutboundStream() {
         return parentChannel.pipeline().get(Http2MultiplexCodec.class)
                 .newOutboundStream(childChannelInitializer).syncUninterruptibly().channel();
     }
+
     /**
      * A child channel for a HTTP/2 stream in IDLE state (that is no headers sent or received),
      * should not emit a RST_STREAM frame on close, as this is a connection error of type protocol error.
@@ -201,7 +202,7 @@ public class Http2MultiplexCodecTest {
     public void idleOutboundStreamShouldNotWriteResetFrameOnClose() {
         childChannelInitializer.handler = new LastInboundHandler();
 
-        Channel childChannel = newChildChannel();
+        Channel childChannel = newOutboundStream();
         assertTrue(childChannel.isActive());
 
         childChannel.close();
@@ -222,7 +223,7 @@ public class Http2MultiplexCodecTest {
             }
         };
 
-        Channel childChannel = newChildChannel();
+        Channel childChannel = newOutboundStream();
         assertTrue(childChannel.isActive());
 
         parentChannel.flush();
@@ -285,7 +286,7 @@ public class Http2MultiplexCodecTest {
         childChannelInitializer.handler = inboundHandler;
 
         Http2MultiplexCodec.Http2StreamChannel childChannel =
-                (Http2MultiplexCodec.Http2StreamChannel) newChildChannel();
+                (Http2MultiplexCodec.Http2StreamChannel) newOutboundStream();
         assertTrue(childChannel.isActive());
         assertTrue(inboundHandler.isChannelActive());
 
@@ -333,7 +334,7 @@ public class Http2MultiplexCodecTest {
         LastInboundHandler inboundHandler = new LastInboundHandler();
         childChannelInitializer.handler = inboundHandler;
 
-        Channel childChannel = newChildChannel();
+        Channel childChannel = newOutboundStream();
         assertTrue(childChannel.isActive());
 
         childChannel.writeAndFlush(new DefaultHttp2HeadersFrame(new DefaultHttp2Headers()));
@@ -349,7 +350,7 @@ public class Http2MultiplexCodecTest {
     public void settingChannelOptsAndAttrs() {
         AttributeKey<String> key = AttributeKey.newInstance("foo");
 
-        Channel childChannel = newChildChannel();
+        Channel childChannel = newOutboundStream();
         childChannel.config().setAutoRead(false).setWriteSpinCount(1000);
         childChannel.attr(key).set("bar");
         assertFalse(childChannel.config().isAutoRead());
@@ -366,7 +367,7 @@ public class Http2MultiplexCodecTest {
                 ctx.fireChannelActive();
             }
         };
-        Channel childChannel = newChildChannel();
+        Channel childChannel = newOutboundStream();
         assertTrue(childChannel.isActive());
 
         Http2GoAwayFrame goAwayFrame = parentChannel.readOutbound();
@@ -383,7 +384,7 @@ public class Http2MultiplexCodecTest {
     @Test
     public void outboundFlowControlWindowShouldBeSetAndUpdated() {
         Http2MultiplexCodec.Http2StreamChannel childChannel =
-                (Http2MultiplexCodec.Http2StreamChannel) newChildChannel();
+                (Http2MultiplexCodec.Http2StreamChannel) newOutboundStream();
         assertTrue(childChannel.isActive());
 
         assertEquals(0, childChannel.getOutboundFlowControlWindow());
