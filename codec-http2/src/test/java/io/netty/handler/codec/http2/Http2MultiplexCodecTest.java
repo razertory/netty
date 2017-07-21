@@ -76,8 +76,8 @@ public class Http2MultiplexCodecTest {
         Http2Settings settings = new Http2Settings().initialWindowSize(initialRemoteStreamWindow);
         parentChannel.pipeline().fireChannelRead(new DefaultHttp2SettingsFrame(settings));
 
-        inboundStream = new Http2Stream2Impl().id(3);
-        outboundStream = new Http2Stream2Impl().id(2);
+        inboundStream = new TestHttp2FrameStream().id(3);
+        outboundStream = new TestHttp2FrameStream().id(2);
     }
 
     @After
@@ -120,9 +120,9 @@ public class Http2MultiplexCodecTest {
     @Test
     public void framesShouldBeMultiplexed() {
 
-        Http2FrameStream stream3 = new Http2Stream2Impl().id(3);
-        Http2FrameStream stream5 = new Http2Stream2Impl().id(5);
-        Http2FrameStream stream11 = new Http2Stream2Impl().id(11);
+        Http2FrameStream stream3 = new TestHttp2FrameStream().id(3);
+        Http2FrameStream stream5 = new TestHttp2FrameStream().id(5);
+        Http2FrameStream stream11 = new TestHttp2FrameStream().id(11);
 
         LastInboundHandler inboundHandler3 = streamActiveAndWriteHeaders(stream3);
         LastInboundHandler inboundHandler5 = streamActiveAndWriteHeaders(stream5);
@@ -551,7 +551,7 @@ public class Http2MultiplexCodecTest {
         assertNotNull(headersFrame);
         assertNotNull(headersFrame.stream());
         assertFalse(Http2CodecUtil.isStreamIdValid(headersFrame.stream().id()));
-        headersFrame.stream().id(outboundStream.id());
+        ((TestHttp2FrameStream) headersFrame.stream()).id(outboundStream.id());
 
         // Now read it and complete the write promise.
         assertSame(headersFrame, parentChannel.readOutbound());
@@ -580,16 +580,15 @@ public class Http2MultiplexCodecTest {
 
         @Override
         Http2FrameStream newStream0() {
-            return new Http2Stream2Impl();
+            return new TestHttp2FrameStream();
         }
     }
 
-    private static final class Http2Stream2Impl implements Http2FrameStream {
+    private static final class TestHttp2FrameStream implements Http2FrameStream {
 
-        private int id = -1;
+        private volatile int id = -1;
 
-        @Override
-        public Http2FrameStream id(int id) {
+        Http2FrameStream id(int id) {
             this.id = id;
             return this;
         }

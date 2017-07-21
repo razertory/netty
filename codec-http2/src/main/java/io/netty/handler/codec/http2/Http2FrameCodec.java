@@ -232,7 +232,7 @@ public final class Http2FrameCodec extends ChannelDuplexHandler {
      * <p>This method is thread-safe.
      */
     Http2FrameStream newStream() {
-        return new DefaultHttp2FrameStream(null);
+        return new DefaultHttp2FrameStream(connection());
     }
 
     /**
@@ -460,7 +460,6 @@ public final class Http2FrameCodec extends ChannelDuplexHandler {
                     Http2Stream connectionStream;
                     if (future.isSuccess() && (connectionStream = connection.stream(streamId)) != null) {
                         connectionStream.setProperty(streamKey, stream);
-                        stream.legacyStream = connectionStream;
                     } else {
                         ctx.fireUserEventTriggered(Http2FrameStreamEvent.closed(stream));
                     }
@@ -481,7 +480,7 @@ public final class Http2FrameCodec extends ChannelDuplexHandler {
                 return;
             }
 
-            DefaultHttp2FrameStream stream2 = new DefaultHttp2FrameStream(stream).id(stream.id());
+            DefaultHttp2FrameStream stream2 = new DefaultHttp2FrameStream(connection()).id(stream.id());
             stream.setProperty(streamKey, stream2);
             ctx.fireUserEventTriggered(Http2FrameStreamEvent.active(stream2));
         }
@@ -618,15 +617,14 @@ public final class Http2FrameCodec extends ChannelDuplexHandler {
     // TODO(buchgr): Merge Http2Stream2 and Http2Stream.
     private static final class DefaultHttp2FrameStream implements Http2FrameStream {
 
+        private final Http2Connection connection;
         private volatile int id = -1;
-        private volatile Http2Stream legacyStream;
 
-        DefaultHttp2FrameStream(Http2Stream legacyStream) {
-            this.legacyStream = legacyStream;
+        DefaultHttp2FrameStream(Http2Connection connection) {
+            this.connection = connection;
         }
 
-        @Override
-        public DefaultHttp2FrameStream id(int id) {
+        DefaultHttp2FrameStream id(int id) {
             if (!isStreamIdValid(id)) {
                 throw new IllegalArgumentException("Stream identifier invalid. Was: " + id);
             }
@@ -641,7 +639,7 @@ public final class Http2FrameCodec extends ChannelDuplexHandler {
 
         @Override
         public State state() {
-            Http2Stream stream0 = legacyStream;
+            Http2Stream stream0 = connection.stream(id);
             return stream0 == null
                     ? State.IDLE
                     : stream0.state();
