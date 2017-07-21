@@ -284,7 +284,8 @@ public class Http2MultiplexCodecTest {
         LastInboundHandler inboundHandler = new LastInboundHandler();
         childChannelInitializer.handler = inboundHandler;
 
-        AbstractHttp2StreamChannel childChannel = (AbstractHttp2StreamChannel) newChildChannel();
+        Http2MultiplexCodec.Http2StreamChannel childChannel =
+                (Http2MultiplexCodec.Http2StreamChannel) newChildChannel();
         assertTrue(childChannel.isActive());
         assertTrue(inboundHandler.isChannelActive());
 
@@ -381,7 +382,8 @@ public class Http2MultiplexCodecTest {
 
     @Test
     public void outboundFlowControlWindowShouldBeSetAndUpdated() {
-        AbstractHttp2StreamChannel childChannel = (AbstractHttp2StreamChannel) newChildChannel();
+        Http2MultiplexCodec.Http2StreamChannel childChannel =
+                (Http2MultiplexCodec.Http2StreamChannel) newChildChannel();
         assertTrue(childChannel.isActive());
 
         assertEquals(0, childChannel.getOutboundFlowControlWindow());
@@ -403,7 +405,8 @@ public class Http2MultiplexCodecTest {
     @Test
     public void onlyDataFramesShouldBeFlowControlled() {
         LastInboundHandler inboundHandler = streamActiveAndWriteHeaders(inboundStream);
-        AbstractHttp2StreamChannel childChannel = (AbstractHttp2StreamChannel) inboundHandler.channel();
+        Http2MultiplexCodec.Http2StreamChannel childChannel =
+                (Http2MultiplexCodec.Http2StreamChannel) inboundHandler.channel();
         assertTrue(childChannel.isWritable());
         assertEquals(initialRemoteStreamWindow, childChannel.getOutboundFlowControlWindow());
 
@@ -420,7 +423,8 @@ public class Http2MultiplexCodecTest {
     @Test
     public void writabilityAndFlowControl() {
         LastInboundHandler inboundHandler = streamActiveAndWriteHeaders(inboundStream);
-        AbstractHttp2StreamChannel childChannel = (AbstractHttp2StreamChannel) inboundHandler.channel();
+        Http2MultiplexCodec.Http2StreamChannel childChannel =
+                (Http2MultiplexCodec.Http2StreamChannel) inboundHandler.channel();
         verifyFlowControlWindowAndWritability(childChannel, initialRemoteStreamWindow);
         assertEquals("true", inboundHandler.writabilityStates());
 
@@ -500,7 +504,7 @@ public class Http2MultiplexCodecTest {
         assertSame(headers, headers2);
     }
 
-    private static void verifyFlowControlWindowAndWritability(AbstractHttp2StreamChannel channel,
+    private static void verifyFlowControlWindowAndWritability(Http2MultiplexCodec.Http2StreamChannel channel,
                                                               int expectedWindowSize) {
         assertEquals(expectedWindowSize, channel.getOutboundFlowControlWindow());
         assertEquals(Math.max(0, expectedWindowSize), channel.config().getWriteBufferHighWaterMark());
