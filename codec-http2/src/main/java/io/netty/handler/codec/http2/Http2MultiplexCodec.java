@@ -124,8 +124,9 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
     // TODO: Use some sane initial capacity.
     private final Map<Http2FrameStream, DefaultHttp2StreamChannel> channels =
             new ConcurrentHashMap<Http2FrameStream, DefaultHttp2StreamChannel>();
+    private final List<DefaultHttp2StreamChannel> channelsToFireChildReadComplete =
+            new ArrayList<DefaultHttp2StreamChannel>();
 
-    private final List<DefaultHttp2StreamChannel> channelsToFireChildReadComplete = new ArrayList<DefaultHttp2StreamChannel>();
     private final boolean server;
     private final ChannelHandler inboundStreamHandler;
 
@@ -603,11 +604,6 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
             OUTBOUND_FLOW_CONTROL_WINDOW_UPDATER.addAndGet(this, bytes);
         }
 
-        // Visible for testing
-        long getOutboundFlowControlWindow() {
-            return outboundFlowControlWindow;
-        }
-
         /**
          * Returns whether reads should continue. The only reason reads shouldn't continue is that the
          * channel was just closed.
@@ -658,6 +654,7 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
         }
 
         private void doWrite(Object msg, ChannelPromise childPromise) {
+            final ChannelFuture future;
             if (msg instanceof Http2StreamFrame) {
                 Http2StreamFrame frame = validateStreamFrame(msg);
                 if (!firstFrameWritten && !isStreamIdValid(stream().id())) {
@@ -676,16 +673,16 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
                  * channel being cancelled, as the outbound buffer of the child channel marks it uncancelable.
                  */
                 assert !childPromise.isCancellable();
-                ChannelFutureListener childPromiseNotifier = new ChannelPromiseNotifier(childPromise);
-                ctx.write(frame).addListener(childPromiseNotifier);
+                future = ctx.write(frame);
             } else if (msg instanceof Http2GoAwayFrame) {
-                ctx.write(msg);
+                future = ctx.write(msg);
             } else {
                 String msgStr = msg.toString();
                 ReferenceCountUtil.release(msg);
                 throw new IllegalArgumentException(
                         "Message must be an Http2GoAwayFrame or Http2StreamFrame: " + msgStr);
             }
+            future.addListener(new ChannelPromiseNotifier(childPromise));
         }
 
         private void bytesConsumed(final int bytes) {
