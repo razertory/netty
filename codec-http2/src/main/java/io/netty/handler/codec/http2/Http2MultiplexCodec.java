@@ -36,7 +36,6 @@ import io.netty.channel.RecvByteBufAllocator;
 import io.netty.channel.WriteBufferWaterMark;
 import io.netty.util.ReferenceCountUtil;
 import io.netty.util.ReferenceCounted;
-import io.netty.util.internal.ObjectUtil;
 import io.netty.util.internal.ThrowableUtil;
 import io.netty.util.internal.UnstableApi;
 
@@ -156,8 +155,7 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
      */
     public Http2MultiplexCodec(boolean server, ChannelHandler inboundStreamHandler) {
         this.server = server;
-        this.inboundStreamHandler = checkSharable(
-                ObjectUtil.checkNotNull(inboundStreamHandler, "inboundStreamHandler"));
+        this.inboundStreamHandler = checkSharable(checkNotNull(inboundStreamHandler, "inboundStreamHandler"));
     }
 
     private static ChannelHandler checkSharable(ChannelHandler handler) {

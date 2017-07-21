@@ -159,7 +159,7 @@ import static io.netty.handler.codec.http2.Http2CodecUtil.isStreamIdValid;
  * HTTP-to-HTTP/2 conversion is performed automatically.
  */
 @UnstableApi
-public class Http2FrameCodec extends ChannelDuplexHandler {
+public final class Http2FrameCodec extends ChannelDuplexHandler {
 
     private static final InternalLogger LOG = InternalLoggerFactory.getInstance(Http2FrameCodec.class);
 
@@ -229,17 +229,9 @@ public class Http2FrameCodec extends ChannelDuplexHandler {
     /**
      * Creates a new outbound/local stream.
      *
-     * <p>This method may only be called after the handler has been added to a {@link io.netty.channel.ChannelPipeline}.
-     *
      * <p>This method is thread-safe.
      */
-    // TODO(buchgr): Discuss: Should this method be thread safe?
     Http2FrameStream newStream() {
-        ChannelHandlerContext ctx0 = ctx;
-        if (ctx0 == null) {
-            throw new IllegalStateException("Channel handler not added to a channel pipeline.");
-        }
-
         return new Http2Stream2Impl(null);
     }
 
@@ -297,11 +289,6 @@ public class Http2FrameCodec extends ChannelDuplexHandler {
     @Override
     public void handlerRemoved(ChannelHandlerContext ctx) throws Exception {
         ctx.pipeline().remove(http2Handler);
-    }
-
-    @Override
-    public void channelInactive(ChannelHandlerContext ctx) throws Exception {
-        super.channelInactive(ctx);
     }
 
     private void sendInitialConnectionWindow() throws Http2Exception {
@@ -629,7 +616,7 @@ public class Http2FrameCodec extends ChannelDuplexHandler {
      * {@link Http2FrameStream} implementation.
      */
     // TODO(buchgr): Merge Http2Stream2 and Http2Stream.
-    static final class Http2Stream2Impl implements Http2FrameStream {
+    private static final class Http2Stream2Impl implements Http2FrameStream {
 
         private volatile int id = -1;
         private volatile Http2Stream legacyStream;
