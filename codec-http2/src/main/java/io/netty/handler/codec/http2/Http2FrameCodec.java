@@ -232,7 +232,7 @@ public final class Http2FrameCodec extends ChannelDuplexHandler {
      * <p>This method is thread-safe.
      */
     Http2FrameStream newStream() {
-        return new Http2Stream2Impl(null);
+        return new DefaultHttp2FrameStream(null);
     }
 
     /**
@@ -414,7 +414,7 @@ public final class Http2FrameCodec extends ChannelDuplexHandler {
     }
 
     private void writeStreamFrame(Http2StreamFrame frame, ChannelPromise promise) {
-        if (!(frame.stream() instanceof Http2Stream2Impl)) {
+        if (!(frame.stream() instanceof DefaultHttp2FrameStream)) {
             throw new IllegalArgumentException("A stream object created by the frame codec needs to be set. " + frame);
         }
 
@@ -437,7 +437,7 @@ public final class Http2FrameCodec extends ChannelDuplexHandler {
         if (isStreamIdValid(headersFrame.stream().id())) {
             streamId = headersFrame.stream().id();
         } else {
-            final Http2Stream2Impl stream = (Http2Stream2Impl) headersFrame.stream();
+            final DefaultHttp2FrameStream stream = (DefaultHttp2FrameStream) headersFrame.stream();
             final Http2Connection connection = http2Handler.connection();
             streamId = connection.local().incrementAndGetNextStreamId();
             if (streamId < 0) {
@@ -457,8 +457,8 @@ public final class Http2FrameCodec extends ChannelDuplexHandler {
                 public void operationComplete(ChannelFuture future) throws Exception {
                     numBufferedStreams--;
 
-                    Http2Stream connectionStream = connection.stream(streamId);
-                    if (future.isSuccess() && connectionStream != null) {
+                    Http2Stream connectionStream;
+                    if (future.isSuccess() && (connectionStream = connection.stream(streamId)) != null) {
                         connectionStream.setProperty(streamKey, stream);
                         stream.legacyStream = connectionStream;
                     } else {
@@ -481,14 +481,14 @@ public final class Http2FrameCodec extends ChannelDuplexHandler {
                 return;
             }
 
-            Http2Stream2Impl stream2 = new Http2Stream2Impl(stream).id(stream.id());
+            DefaultHttp2FrameStream stream2 = new DefaultHttp2FrameStream(stream).id(stream.id());
             stream.setProperty(streamKey, stream2);
             ctx.fireUserEventTriggered(Http2FrameStreamEvent.active(stream2));
         }
 
         @Override
         public void onStreamClosed(Http2Stream stream) {
-            Http2Stream2Impl stream2 = stream.getProperty(streamKey);
+            DefaultHttp2FrameStream stream2 = stream.getProperty(streamKey);
             if (stream2 != null) {
                 ctx.fireUserEventTriggered(Http2FrameStreamEvent.closed(stream2));
             }
@@ -616,17 +616,17 @@ public final class Http2FrameCodec extends ChannelDuplexHandler {
      * {@link Http2FrameStream} implementation.
      */
     // TODO(buchgr): Merge Http2Stream2 and Http2Stream.
-    private static final class Http2Stream2Impl implements Http2FrameStream {
+    private static final class DefaultHttp2FrameStream implements Http2FrameStream {
 
         private volatile int id = -1;
         private volatile Http2Stream legacyStream;
 
-        Http2Stream2Impl(Http2Stream legacyStream) {
+        DefaultHttp2FrameStream(Http2Stream legacyStream) {
             this.legacyStream = legacyStream;
         }
 
         @Override
-        public Http2Stream2Impl id(int id) {
+        public DefaultHttp2FrameStream id(int id) {
             if (!isStreamIdValid(id)) {
                 throw new IllegalArgumentException("Stream identifier invalid. Was: " + id);
             }
