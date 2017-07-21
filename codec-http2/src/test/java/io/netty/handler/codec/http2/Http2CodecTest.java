@@ -109,17 +109,17 @@ public class Http2CodecTest {
         }
     }
 
-    private Http2MultiplexCodec.Http2StreamChannel newOutboundStream(ChannelHandler handler) {
-        return (Http2MultiplexCodec.Http2StreamChannel) clientChannel.pipeline().get(Http2MultiplexCodec.class)
+    private Http2StreamChannel newOutboundStream(ChannelHandler handler) {
+        return (Http2StreamChannel) clientChannel.pipeline().get(Http2MultiplexCodec.class)
                 .newOutboundStream(handler).syncUninterruptibly().channel();
     }
 
     @Test
     public void multipleOutboundStreams() {
-        Http2MultiplexCodec.Http2StreamChannel childChannel1 = newOutboundStream(new TestChannelInitializer());
+        Http2StreamChannel childChannel1 = newOutboundStream(new TestChannelInitializer());
         assertTrue(childChannel1.isActive());
         assertFalse(isStreamIdValid(childChannel1.stream().id()));
-        Http2MultiplexCodec.Http2StreamChannel childChannel2 = newOutboundStream(new TestChannelInitializer());
+        Http2StreamChannel childChannel2 = newOutboundStream(new TestChannelInitializer());
         assertTrue(childChannel2.isActive());
         assertFalse(isStreamIdValid(childChannel2.stream().id()));
 
