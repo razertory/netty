@@ -34,7 +34,6 @@ import io.netty.util.AttributeKey;
 
 import java.net.InetSocketAddress;
 
-import io.netty.util.DefaultAttributeMap;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -89,7 +88,6 @@ public class Http2MultiplexCodecTest {
         parentChannel.finishAndReleaseAll();
     }
 
-    // TODO(buchgr): Thread model of child channel
     // TODO(buchgr): Flush from child channel
     // TODO(buchgr): ChildChannel.childReadComplete()
     // TODO(buchgr): GOAWAY Logic
@@ -541,7 +539,7 @@ public class Http2MultiplexCodecTest {
     /**
      * Simulates the frame codec, in first assigning an identifier and the completing the write promise.
      */
-    Http2FrameStream readOutboundHeadersAndAssignId() {
+    private Http2FrameStream readOutboundHeadersAndAssignId() {
         // Only peek at the frame, so to not complete the promise of the write. We need to first
         // assign a stream identifier, as the frame codec would do.
         Http2HeadersFrame headersFrame = (Http2HeadersFrame) parentChannel.outboundMessages().peek();
@@ -559,7 +557,7 @@ public class Http2MultiplexCodecTest {
     /**
      * This class removes the bits that would require the frame codec, so that the class becomes testable.
      */
-    static final class TestableHttp2MultiplexCodec extends Http2MultiplexCodec {
+    private static final class TestableHttp2MultiplexCodec extends Http2MultiplexCodec {
 
         TestableHttp2MultiplexCodec(boolean server, ChannelHandler inboundStreamHandler) {
             super(server, inboundStreamHandler);
@@ -581,9 +579,10 @@ public class Http2MultiplexCodecTest {
         }
     }
 
-    static final class Http2Stream2Impl extends DefaultAttributeMap implements Http2FrameStream {
+    private static final class Http2Stream2Impl implements Http2FrameStream {
 
         private int id = -1;
+
         @Override
         public Http2FrameStream id(int id) {
             this.id = id;
