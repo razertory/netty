@@ -21,12 +21,15 @@ import io.netty.channel.ChannelConfig;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandler;
+import io.netty.channel.ChannelHandlerAdapter;
 import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.ChannelInboundHandler;
 import io.netty.channel.ChannelPromise;
 import io.netty.channel.ChannelPromiseNotifier;
 import io.netty.channel.EventLoop;
 import io.netty.util.ReferenceCountUtil;
 import io.netty.util.ReferenceCounted;
+import io.netty.util.internal.ObjectUtil;
 import io.netty.util.internal.UnstableApi;
 
 import java.util.ArrayList;
@@ -53,7 +56,7 @@ import static io.netty.handler.codec.http2.Http2CodecUtil.isStreamIdValid;
  * free to close the channel in response to such events if they don't have use for any queued
  * messages.
  *
- * <p>Outbound streams are supported via the {@link #newChildChannel(ChannelHandler)}.
+ * <p>Outbound streams are supported via the {@link #newOutboundStream(ChannelHandler)}.
  *
  * <p>{@link ChannelConfig#setMaxMessagesPerRead(int)} and {@link ChannelConfig#setAutoRead(boolean)} are supported.
  *
@@ -109,6 +112,8 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
 
     private final List<Http2StreamChannel> channelsToFireChildReadComplete = new ArrayList<Http2StreamChannel>();
     private final boolean server;
+    private final ChannelHandler inboundStreamHandler;
+
     // Visible for testing
     ChannelHandlerContext ctx;
 
@@ -119,8 +124,18 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
      *
      * @param server {@code true} this is a server
      */
-    public Http2MultiplexCodec(boolean server) {
+    public Http2MultiplexCodec(boolean server, ChannelHandler inboundStreamHandler) {
         this.server = server;
+        this.inboundStreamHandler = checkSharable(
+                ObjectUtil.checkNotNull(inboundStreamHandler, "inboundStreamHandler"));
+    }
+
+    private static ChannelHandler checkSharable(ChannelHandler handler) {
+        if ((handler instanceof ChannelHandlerAdapter && !((ChannelHandlerAdapter) handler).isSharable()) ||
+                !handler.getClass().isAnnotationPresent(Sharable.class)) {
+            throw new IllegalArgumentException("The handler must be Sharable");
+        }
+        return handler;
     }
 
     @Override
@@ -212,7 +227,8 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
         if (childChannel == null) {
             childChannel = new Http2StreamChannel(ctx.channel(), stream);
 
-            ctx.fireChannelRead(childChannel);
+            childChannel.pipeline().addLast(inboundStreamHandler);
+
             ChannelFuture future = ctx.channel().eventLoop().register(childChannel);
             future.addListener(CHILD_CHANNEL_REGISTRATION_LISTENER);
             channels.put(stream, childChannel);
@@ -225,10 +241,10 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
     }
 
     // TODO: This is most likely not the best way to expose this, need to think more about it.
-    public final ChannelFuture newChildChannel(ChannelHandler handler) {
+    public final ChannelFuture newOutboundStream(ChannelHandler outboundStreamHandler) {
         Http2StreamChannel childChannel = new Http2StreamChannel(ctx.channel(), newStream());
-        if (handler != null) {
-            childChannel.pipeline().addLast(handler);
+        if (outboundStreamHandler != null) {
+            childChannel.pipeline().addLast(outboundStreamHandler);
         }
         ChannelFuture future = ctx.channel().eventLoop().register(childChannel);
         future.addListener(CHILD_CHANNEL_REGISTRATION_LISTENER);

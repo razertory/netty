@@ -19,11 +19,9 @@ import io.netty.buffer.ByteBufUtil;
 import io.netty.buffer.Unpooled;
 import io.netty.buffer.UnpooledByteBufAllocator;
 import io.netty.channel.Channel;
-import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelHandler;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
-import io.netty.channel.ChannelOption;
 import io.netty.channel.ChannelOutboundHandlerAdapter;
 import io.netty.channel.ChannelPromise;
 import io.netty.channel.embedded.EmbeddedChannel;
@@ -37,7 +35,6 @@ import io.netty.util.AttributeKey;
 import java.net.InetSocketAddress;
 
 import io.netty.util.DefaultAttributeMap;
-import org.hamcrest.Matchers;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -48,7 +45,6 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
-import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 
 /**
@@ -75,18 +71,7 @@ public class Http2MultiplexCodecTest {
         childChannelInitializer = new TestChannelInitializer();
         parentChannel = new EmbeddedChannel();
         parentChannel.connect(new InetSocketAddress(0));
-        parentChannel.pipeline().addLast(new TestableHttp2MultiplexCodec(true));
-        parentChannel.pipeline().addLast(new ChannelInboundHandlerAdapter() {
-            @Override
-            public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
-                if (msg instanceof Channel) {
-                    ((Channel) msg).pipeline().addLast(childChannelInitializer);
-                } else {
-                    ctx.fireChannelRead(msg);
-                }
-            }
-        });
-
+        parentChannel.pipeline().addLast(new TestableHttp2MultiplexCodec(true, childChannelInitializer));
         parentChannel.runPendingTasks();
 
         Http2Settings settings = new Http2Settings().initialWindowSize(initialRemoteStreamWindow);
@@ -207,7 +192,7 @@ public class Http2MultiplexCodecTest {
 
     private Channel newChildChannel() {
         return parentChannel.pipeline().get(Http2MultiplexCodec.class)
-                .newChildChannel(childChannelInitializer).syncUninterruptibly().channel();
+                .newOutboundStream(childChannelInitializer).syncUninterruptibly().channel();
     }
     /**
      * A child channel for a HTTP/2 stream in IDLE state (that is no headers sent or received),
@@ -576,8 +561,8 @@ public class Http2MultiplexCodecTest {
      */
     static final class TestableHttp2MultiplexCodec extends Http2MultiplexCodec {
 
-        TestableHttp2MultiplexCodec(boolean server) {
-            super(server);
+        TestableHttp2MultiplexCodec(boolean server, ChannelHandler inboundStreamHandler) {
+            super(server, inboundStreamHandler);
         }
 
         @Override
