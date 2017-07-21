@@ -23,7 +23,6 @@ import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandler;
 import io.netty.channel.ChannelHandlerAdapter;
 import io.netty.channel.ChannelHandlerContext;
-import io.netty.channel.ChannelInboundHandler;
 import io.netty.channel.ChannelPromise;
 import io.netty.channel.ChannelPromiseNotifier;
 import io.netty.channel.EventLoop;
@@ -225,13 +224,12 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
     private Http2StreamChannel onStreamActive(Http2FrameStream stream) {
         Http2StreamChannel childChannel = channels.get(stream);
         if (childChannel == null) {
-            childChannel = new Http2StreamChannel(ctx.channel(), stream);
+            childChannel = newStreamChannel(stream);
 
             childChannel.pipeline().addLast(inboundStreamHandler);
 
             ChannelFuture future = ctx.channel().eventLoop().register(childChannel);
             future.addListener(CHILD_CHANNEL_REGISTRATION_LISTENER);
-            channels.put(stream, childChannel);
         }
 
         assert !childChannel.isWritable();
@@ -242,13 +240,20 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
 
     // TODO: This is most likely not the best way to expose this, need to think more about it.
     public final ChannelFuture newOutboundStream(ChannelHandler outboundStreamHandler) {
-        Http2StreamChannel childChannel = new Http2StreamChannel(ctx.channel(), newStream());
+        Http2StreamChannel childChannel = newStreamChannel(newStream());
+
         if (outboundStreamHandler != null) {
             childChannel.pipeline().addLast(outboundStreamHandler);
         }
         ChannelFuture future = ctx.channel().eventLoop().register(childChannel);
         future.addListener(CHILD_CHANNEL_REGISTRATION_LISTENER);
         return future;
+    }
+
+    private Http2StreamChannel newStreamChannel(Http2FrameStream stream) {
+        Http2StreamChannel childChannel = new Http2StreamChannel(ctx.channel(), stream);
+        channels.put(stream, childChannel);
+        return childChannel;
     }
 
     @Override
@@ -305,7 +310,6 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
 
         Http2StreamChannel(Channel parentChannel, Http2FrameStream stream) {
             super(parentChannel, stream);
-            channels.put(stream, this);
         }
 
         void streamClosed() {
