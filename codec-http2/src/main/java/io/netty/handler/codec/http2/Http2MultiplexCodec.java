@@ -447,7 +447,7 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
 
         @Override
         protected boolean isCompatible(EventLoop loop) {
-            return true;
+            return loop == parent().eventLoop();
         }
 
         @Override
@@ -467,7 +467,7 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
 
         @Override
         protected void doDisconnect() throws Exception {
-            throw new UnsupportedOperationException();
+            doClose();
         }
 
         @Override
@@ -667,11 +667,7 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
                 }
                 frame.stream(stream());
 
-                /**
-                 * Wrap the ChannelPromise of the child channel in a ChannelPromise of the parent channel
-                 * in order to be able to use it on the parent channel. We don't need to worry about the
-                 * channel being cancelled, as the outbound buffer of the child channel marks it uncancelable.
-                 */
+
                 assert !childPromise.isCancellable();
                 future = ctx.write(frame);
             } else if (msg instanceof Http2GoAwayFrame) {
@@ -682,6 +678,7 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
                 throw new IllegalArgumentException(
                         "Message must be an Http2GoAwayFrame or Http2StreamFrame: " + msgStr);
             }
+            // Notify the child promise once complete the write
             future.addListener(new ChannelPromiseNotifier(childPromise));
         }
 
