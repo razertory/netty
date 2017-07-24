@@ -71,7 +71,6 @@ public class HelloWorldHttp2Handler extends ChannelDuplexHandler {
      * If receive a frame with end-of-stream set, send a pre-canned response.
      */
     private static void onDataRead(ChannelHandlerContext ctx, Http2DataFrame data) throws Exception {
-        int consumed = data.padding() + data.content().readableBytes();
         Http2FrameStream stream = data.stream();
 
         if (data.isEndStream()) {
@@ -82,7 +81,7 @@ public class HelloWorldHttp2Handler extends ChannelDuplexHandler {
         }
 
         // Update the flowcontroller
-        ctx.write(new DefaultHttp2WindowUpdateFrame(consumed).stream(stream));
+        ctx.write(new DefaultHttp2WindowUpdateFrame(data.flowControlledBytes()).stream(stream));
     }
 
     /**
