@@ -105,6 +105,11 @@ public final class DefaultHttp2DataFrame extends AbstractHttp2StreamFrame implem
     }
 
     @Override
+    public int flowControlledBytes() {
+        return content().readableBytes() + padding;
+    }
+
+    @Override
     public DefaultHttp2DataFrame copy() {
         return replace(content().copy());
     }

@@ -625,7 +625,7 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
             }
             int numBytesToBeConsumed = 0;
             if (msg instanceof Http2DataFrame) {
-                numBytesToBeConsumed = dataFrameFlowControlBytes((Http2DataFrame) msg);
+                numBytesToBeConsumed = ((Http2DataFrame) msg).flowControlledBytes();
                 allocHandle.lastBytesRead(numBytesToBeConsumed);
             } else {
                 allocHandle.lastBytesRead(ARBITRARY_MESSAGE_SIZE);
@@ -646,13 +646,6 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
                 buffer.addMessage(REEVALUATE_WRITABILITY_MESSAGE, 1, voidPromise());
                 unsafe().flush();
             }
-        }
-
-        private static int dataFrameFlowControlBytes(Http2DataFrame frame) {
-            return frame.content().readableBytes()
-                    + frame.padding()
-                    // +1 to account for the pad length field. See http://httpwg.org/specs/rfc7540.html#DATA
-                    + (frame.padding() & 1);
         }
 
         private void doWrite(Object msg, ChannelPromise childPromise) {
@@ -724,7 +717,7 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
                 @Override
                 public int size(Object msg) {
                     if (msg instanceof Http2DataFrame) {
-                        return dataFrameFlowControlBytes((Http2DataFrame) msg);
+                        return ((Http2DataFrame) msg).flowControlledBytes();
                     }
                     return 0;
                 }

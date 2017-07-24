@@ -37,6 +37,11 @@ public interface Http2DataFrame extends Http2StreamFrame, ByteBufHolder {
     ByteBuf content();
 
     /**
+     * Returns the number if bytes that are flow-controlled.
+     */
+    int flowControlledBytes();
+
+    /**
      * Returns {@code true} if the END_STREAM flag ist set.
      */
     boolean isEndStream();
