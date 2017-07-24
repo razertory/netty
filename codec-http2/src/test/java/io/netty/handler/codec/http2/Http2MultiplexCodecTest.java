@@ -103,6 +103,7 @@ public class Http2MultiplexCodecTest {
         Http2DataFrame dataFrame2 = new DefaultHttp2DataFrame(bb("world")).stream(inboundStream);
 
         assertFalse(inboundHandler.isChannelActive());
+        parentChannel.pipeline().fireUserEventTriggered(Http2FrameStreamEvent.active(inboundStream));
         parentChannel.pipeline().fireChannelRead(headersFrame);
         assertTrue(inboundHandler.isChannelActive());
         parentChannel.pipeline().fireChannelRead(dataFrame1);
@@ -513,6 +514,7 @@ public class Http2MultiplexCodecTest {
         childChannelInitializer.handler = inboundHandler;
         assertFalse(inboundHandler.isChannelActive());
 
+        parentChannel.pipeline().fireUserEventTriggered(Http2FrameStreamEvent.active(stream));
         parentChannel.pipeline().fireChannelRead(new DefaultHttp2HeadersFrame(request).stream(stream));
         parentChannel.pipeline().fireChannelReadComplete();
         assertTrue(inboundHandler.isChannelActive());
