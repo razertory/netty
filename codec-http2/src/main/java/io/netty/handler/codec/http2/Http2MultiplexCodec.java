@@ -652,7 +652,7 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
             // If the buffer is not writable but should be writable, then write and flush a dummy object
             // to trigger a writability change.
             if (!buffer.isWritable() && buffer.totalPendingWriteBytes() < config.getWriteBufferHighWaterMark()) {
-                unsafe().outboundBuffer().addMessage(REEVALUATE_WRITABILITY_MESSAGE, 1, voidPromise());
+                buffer.addMessage(REEVALUATE_WRITABILITY_MESSAGE, 1, voidPromise());
                 unsafe().flush();
             }
         }
