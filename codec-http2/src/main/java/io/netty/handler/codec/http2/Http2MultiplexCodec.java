@@ -331,18 +331,6 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
 
     private static final class DefaultHttp2StreamChannel extends AbstractChannel implements Http2StreamChannel {
 
-        private final ChannelHandlerContext ctx;
-        private final ChannelFutureListener firstFrameWriteListener;
-
-        /** {@code true} after the first HEADERS frame has been written **/
-        private boolean firstFrameWritten;
-
-        /** {@code true} if a close without an error was initiated **/
-        private boolean streamClosedWithoutError;
-
-        /** {@code true} if stream is in {@link Http2MultiplexCodec#channelsToFireChildReadComplete}. **/
-        boolean inStreamsToFireChildReadComplete;
-
         @SuppressWarnings("rawtypes")
         private static final AtomicLongFieldUpdater<DefaultHttp2StreamChannel> OUTBOUND_FLOW_CONTROL_WINDOW_UPDATER;
 
@@ -351,7 +339,7 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
          * the channel (using Unsafe) instead of notifying handlers of the message with {@code
          * channelRead()}. Additional inbound messages must not arrive after this one.
          */
-        protected static final Object CLOSE_MESSAGE = new Object();
+        private static final Object CLOSE_MESSAGE = new Object();
         /**
          * Used to add a message to the {@link ChannelOutboundBuffer}, so as to have it re-evaluate its writability
          * state.
@@ -366,13 +354,24 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
          */
         private static final int ARBITRARY_MESSAGE_SIZE = 9;
 
+        private final ChannelHandlerContext ctx;
+        private final ChannelFutureListener firstFrameWriteListener;
         private final Http2StreamChannelConfig config = new Http2StreamChannelConfig(this);
         private final Queue<Object> inboundBuffer = new ArrayDeque<Object>(4);
-
         private final Http2FrameStream stream;
+
         private boolean closed;
         private boolean readInProgress;
         private MessageSizeEstimator.Handle sizeEstimatorHandle;
+
+        /** {@code true} after the first HEADERS frame has been written **/
+        private boolean firstFrameWritten;
+
+        /** {@code true} if a close without an error was initiated **/
+        private boolean streamClosedWithoutError;
+
+        /** {@code true} if stream is in {@link Http2MultiplexCodec#channelsToFireChildReadComplete}. **/
+        boolean inStreamsToFireChildReadComplete;
 
         /**
          * The flow control window of the remote side i.e. the number of bytes this channel is allowed to send to the
@@ -716,10 +715,7 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
 
                 @Override
                 public int size(Object msg) {
-                    if (msg instanceof Http2DataFrame) {
-                        return ((Http2DataFrame) msg).flowControlledBytes();
-                    }
-                    return 0;
+                    return msg instanceof Http2DataFrame ? ((Http2DataFrame) msg).flowControlledBytes() : 0;
                 }
             }
 
