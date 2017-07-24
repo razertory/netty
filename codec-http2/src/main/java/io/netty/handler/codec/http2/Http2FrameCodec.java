@@ -22,7 +22,6 @@ import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandler;
 import io.netty.channel.ChannelPromise;
-import io.netty.channel.ChannelPromiseNotifier;
 import io.netty.handler.codec.http2.Http2Connection.PropertyKey;
 import io.netty.handler.codec.http2.Http2Stream.State;
 import io.netty.handler.codec.http2.StreamBufferingEncoder.Http2ChannelClosedException;
@@ -432,10 +431,12 @@ public final class Http2FrameCodec extends ChannelDuplexHandler {
         }
     }
 
-    private void writeHeadersFrame(Http2HeadersFrame headersFrame, ChannelPromise promise) {
+    private void writeHeadersFrame(Http2HeadersFrame headersFrame, final ChannelPromise promise) {
         final int streamId;
+        final ChannelPromise writePromise;
         if (isStreamIdValid(headersFrame.stream().id())) {
             streamId = headersFrame.stream().id();
+            writePromise = promise;
         } else {
             final DefaultHttp2FrameStream stream = (DefaultHttp2FrameStream) headersFrame.stream();
             final Http2Connection connection = http2Handler.connection();
@@ -450,25 +451,29 @@ public final class Http2FrameCodec extends ChannelDuplexHandler {
             stream.id(streamId);
             // Ensure that the listener gets executed before any listeners a user might have attached.
             // TODO(buchgr): Once Http2Stream2 and Http2Stream are merged this is no longer necessary.
-            ChannelPromiseNotifier promiseNotifier = new ChannelPromiseNotifier(promise);
-            promise = ctx.newPromise();
-            promise.addListener(new ChannelFutureListener() {
+            writePromise = ctx.newPromise();
+            writePromise.addListener(new ChannelFutureListener() {
                 @Override
                 public void operationComplete(ChannelFuture future) throws Exception {
                     numBufferedStreams--;
 
+                    Throwable cause = future.cause();
                     Http2Stream connectionStream;
-                    if (future.isSuccess() && (connectionStream = connection.stream(streamId)) != null) {
+                    if (cause == null && (connectionStream = connection.stream(streamId)) != null) {
                         connectionStream.setProperty(streamKey, stream);
                     } else {
                         ctx.fireUserEventTriggered(Http2FrameStreamEvent.closed(stream));
                     }
+                    if (cause == null) {
+                        promise.setSuccess();
+                    } else {
+                        promise.setFailure(cause);
+                    }
                 }
             });
-            promise.addListener(promiseNotifier);
         }
         http2Handler.encoder().writeHeaders(http2HandlerCtx, streamId, headersFrame.headers(), headersFrame.padding(),
-                                            headersFrame.isEndStream(), promise);
+                                            headersFrame.isEndStream(), writePromise);
     }
 
     // TODO: Should we maybe also send Http2FrameStreamEvents for all the other stream state changes ?
@@ -536,7 +541,7 @@ public final class Http2FrameCodec extends ChannelDuplexHandler {
                 return;
             }
 
-            fireHttp2Stream2Exception(stream2, streamException.error(), cause);
+            fireHttp2FrameStreamException(stream2, streamException.error(), cause);
         }
 
         @Override
@@ -544,7 +549,7 @@ public final class Http2FrameCodec extends ChannelDuplexHandler {
             return super.isGracefulShutdownComplete() && numBufferedStreams == 0;
         }
 
-        private void fireHttp2Stream2Exception(Http2FrameStream stream, Http2Error error, Throwable cause) {
+        private void fireHttp2FrameStreamException(Http2FrameStream stream, Http2Error error, Throwable cause) {
             ctx.fireExceptionCaught(new Http2FrameStreamException(stream, error, cause));
         }
     }

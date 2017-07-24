@@ -667,7 +667,6 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
                 }
                 frame.stream(stream());
 
-
                 assert !childPromise.isCancellable();
                 future = ctx.write(frame);
             } else if (msg instanceof Http2GoAwayFrame) {
