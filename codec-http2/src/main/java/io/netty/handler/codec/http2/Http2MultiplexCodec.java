@@ -16,7 +16,6 @@
 package io.netty.handler.codec.http2;
 
 import io.netty.buffer.ByteBuf;
-import io.netty.buffer.Unpooled;
 import io.netty.channel.AbstractChannel;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelConfig;
@@ -240,15 +239,7 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
     private void channelReadStreamFrame(Http2StreamFrame frame) {
         Http2FrameStream stream = frame.stream();
 
-        DefaultHttp2StreamChannel childChannel = channels.get(stream);
-
-        // TODO: Should this happen now that onStreamActive(...) is called when an Http2FrameStreamEvent with state
-        // ACTIVE is received.
-        if (childChannel == null) {
-            childChannel = onStreamActive(stream);
-        }
-
-        fireChildReadAndRegister(childChannel, frame);
+        fireChildReadAndRegister(channels.get(stream), frame);
     }
 
     private void onStreamClosed(Http2FrameStream stream) {
