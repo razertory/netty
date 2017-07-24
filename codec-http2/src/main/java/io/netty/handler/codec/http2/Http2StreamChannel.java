@@ -18,8 +18,10 @@ package io.netty.handler.codec.http2;
 
 import io.netty.channel.Channel;
 
-//TODO: Should we have an extra method to "open" the stream and so Channel and take care of sending the
-//      Http2HeadersFrame under the hood ?
+// TODO: Should we have an extra method to "open" the stream and so Channel and take care of sending the
+//       Http2HeadersFrame under the hood ?
+// TODO: Should we extend SocketChannel and map input and output state to the stream state ?
+//
 public interface Http2StreamChannel extends Channel {
 
     /**
