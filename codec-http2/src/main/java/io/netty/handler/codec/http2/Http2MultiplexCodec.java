@@ -252,7 +252,7 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
     }
 
     private void onStreamClosed(Http2FrameStream stream) {
-        DefaultHttp2StreamChannel childChannel = channels.get(stream);
+        DefaultHttp2StreamChannel childChannel = channels.remove(stream);
         if (childChannel != null) {
             childChannel.streamClosed();
         }
@@ -300,6 +300,10 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
             Http2FrameStream stream = streamException.stream();
             DefaultHttp2StreamChannel childChannel = channels.get(stream);
 
+            if (childChannel == null)  {
+                // TODO: Should we log this ?
+                return;
+            }
             try {
                 childChannel.pipeline().fireExceptionCaught(streamException.getCause());
             } finally {
@@ -334,7 +338,7 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
         channelsToFireChildReadComplete.clear();
     }
 
-    static final class DefaultHttp2StreamChannel extends AbstractChannel implements Http2StreamChannel {
+    private static final class DefaultHttp2StreamChannel extends AbstractChannel implements Http2StreamChannel {
 
         private final ChannelHandlerContext ctx;
         private final ChannelFutureListener firstFrameWriteListener;
