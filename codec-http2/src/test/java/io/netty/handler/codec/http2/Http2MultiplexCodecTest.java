@@ -190,8 +190,8 @@ public class Http2MultiplexCodecTest {
     }
 
     private Http2StreamChannel newOutboundStream() {
-        return (Http2StreamChannel) parentChannel.pipeline().get(Http2MultiplexCodec.class)
-                .newOutboundStream(childChannelInitializer).syncUninterruptibly().channel();
+        return new Http2StreamBootstrap(parentChannel).handler(childChannelInitializer)
+                .open().syncUninterruptibly().getNow();
     }
 
     /**
