@@ -122,7 +122,7 @@ public final class Http2FrameCodecBuilder {
      * <p>By default no frame logger is used.
      */
     public Http2FrameCodecBuilder frameLogger(Http2FrameLogger frameLogger) {
-        this.frameLogger = checkNotNull(frameLogger, "frameLogger");
+        this.frameLogger = frameLogger;
         return this;
     }
 
