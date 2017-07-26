@@ -70,7 +70,7 @@ import static java.lang.Math.min;
  * free to close the channel in response to such events if they don't have use for any queued
  * messages.
  *
- * <p>Outbound streams are supported via the {@link #newOutboundStream(ChannelHandler)}.
+ * <p>Outbound streams are supported via the {@link Http2StreamBootstrap}.
  *
  * <p>{@link ChannelConfig#setMaxMessagesPerRead(int)} and {@link ChannelConfig#setAutoRead(boolean)} are supported.
  *
@@ -267,18 +267,11 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
     }
 
     // TODO: This is most likely not the best way to expose this, need to think more about it.
-    public final ChannelFuture newOutboundStream(ChannelHandler outboundStreamHandler) {
-        DefaultHttp2StreamChannel childChannel = newStreamChannel(newStream());
-
-        if (outboundStreamHandler != null) {
-            childChannel.pipeline().addLast(outboundStreamHandler);
-        }
-        ChannelFuture future = ctx.channel().eventLoop().register(childChannel);
-        future.addListener(CHILD_CHANNEL_REGISTRATION_LISTENER);
-        return future;
+    final Http2StreamChannel newOutboundStream() {
+        return newStreamChannel(newStream());
     }
 
-    private DefaultHttp2StreamChannel newStreamChannel(Http2FrameStream stream) {
+    private  DefaultHttp2StreamChannel newStreamChannel(Http2FrameStream stream) {
         DefaultHttp2StreamChannel childChannel = new DefaultHttp2StreamChannel(ctx, stream, firstFrameWriteListener);
         channels.put(stream, childChannel);
         return childChannel;
