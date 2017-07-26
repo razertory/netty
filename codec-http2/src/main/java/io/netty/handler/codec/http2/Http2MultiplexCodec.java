@@ -28,6 +28,7 @@ import io.netty.channel.ChannelMetadata;
 import io.netty.channel.ChannelOutboundBuffer;
 import io.netty.channel.ChannelPromise;
 import io.netty.channel.DefaultChannelConfig;
+import io.netty.channel.DefaultMaxMessagesRecvByteBufAllocator;
 import io.netty.channel.EventLoop;
 import io.netty.channel.MessageSizeEstimator;
 import io.netty.channel.RecvByteBufAllocator;
@@ -40,8 +41,6 @@ import io.netty.util.internal.UnstableApi;
 import java.net.SocketAddress;
 import java.nio.channels.ClosedChannelException;
 import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Queue;
 import java.util.concurrent.atomic.AtomicLongFieldUpdater;
 
@@ -151,13 +150,29 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
         }
     }
 
-    private final List<DefaultHttp2StreamChannel> channelsToFireChildReadComplete =
-            new ArrayList<DefaultHttp2StreamChannel>();
+    private static final class Http2StreamChannelRecvByteBufAllocator extends DefaultMaxMessagesRecvByteBufAllocator {
+
+        static final Http2StreamChannelRecvByteBufAllocator INSTANCE = new Http2StreamChannelRecvByteBufAllocator();
+
+        @Override
+        public MaxMessageHandle newHandle() {
+            return new MaxMessageHandle() {
+                @Override
+                public int guess() {
+                    return 1024;
+                }
+            };
+        }
+    }
 
     private final ChannelHandler inboundStreamHandler;
 
     private int initialOutboundStreamWindow = Http2CodecUtil.DEFAULT_WINDOW_SIZE;
     private boolean flushNeeded;
+
+    // Linked-List for DefaultHttp2StreamChannel instances that need to be processed by channelReadComplete(...)
+    private DefaultHttp2StreamChannel head;
+    private DefaultHttp2StreamChannel tail;
 
     /**
      * Construct a new handler whose child channels run in a different event loop.
@@ -209,7 +224,14 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
     @Override
     public final void handlerRemoved0(ChannelHandlerContext ctx) throws Exception {
         super.handlerRemoved0(ctx);
-        channelsToFireChildReadComplete.clear();
+
+        DefaultHttp2StreamChannel ch = head;
+        while (ch != null) {
+            DefaultHttp2StreamChannel curr = ch;
+            ch = curr.next;
+            curr.next = null;
+        }
+        head = tail = null;
     }
 
     @Override
@@ -221,7 +243,6 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
     final void onHttp2Frame(ChannelHandlerContext ctx, Http2Frame frame) {
         if (frame instanceof Http2StreamFrame) {
             Http2StreamFrame streamFrame = (Http2StreamFrame) frame;
-
             onHttp2StreamFrame(((Http2MultiplexCodecStream) streamFrame.stream()).channel, streamFrame);
         } else if (frame instanceof Http2GoAwayFrame) {
             onHttp2GoAwayFrame(ctx, (Http2GoAwayFrame) frame);
@@ -243,7 +264,7 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
 
     @Override
     final void onHttp2StreamActive(ChannelHandlerContext ctx, Http2FrameStream stream) {
-        DefaultHttp2StreamChannel childChannel = newStreamChannel(stream);
+        DefaultHttp2StreamChannel childChannel = new DefaultHttp2StreamChannel(stream);
 
         childChannel.pipeline().addLast(inboundStreamHandler);
 
@@ -257,12 +278,7 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
 
     // TODO: This is most likely not the best way to expose this, need to think more about it.
     final Http2StreamChannel newOutboundStream() {
-        return newStreamChannel(newStream());
-    }
-
-    private DefaultHttp2StreamChannel newStreamChannel(Http2FrameStream stream) {
-        DefaultHttp2StreamChannel childChannel = new DefaultHttp2StreamChannel(stream);
-        return childChannel;
+        return new DefaultHttp2StreamChannel(newStream());
     }
 
     @Override
@@ -288,10 +304,19 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
             }
 
             // Just called fireChildReadComplete() no need to do again in channelReadComplete(...)
-            childChannel.inStreamsToFireChildReadComplete = false;
-        } else if (!childChannel.inStreamsToFireChildReadComplete) {
-            channelsToFireChildReadComplete.add(childChannel);
-            childChannel.inStreamsToFireChildReadComplete = true;
+            childChannel.fireChannelReadPending = false;
+        } else if (!childChannel.fireChannelReadPending) {
+
+            assert childChannel.next == null;
+
+            if (tail == null) {
+                assert head == null;
+                tail = head = childChannel;
+            } else {
+                tail.next = childChannel;
+                tail = childChannel;
+            }
+            childChannel.fireChannelReadPending = true;
         }
     }
 
@@ -330,23 +355,19 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
         // If we have many child channel we can optimize for the case when multiple call flush() in
         // channelReadComplete(...) callbacks and only do it once as otherwise we will end-up with multiple
         // write calls on the socket which is expensive.
-        int size = channelsToFireChildReadComplete.size();
         try {
-            if (size != 0) {
-                try {
-                    for (int i = 0; i < size; ++i) {
-                        DefaultHttp2StreamChannel childChannel = channelsToFireChildReadComplete.get(i);
-                        if (childChannel.inStreamsToFireChildReadComplete) {
-                            // Clear early in case fireChildReadComplete() causes it to need to be re-processed
-                            childChannel.inStreamsToFireChildReadComplete = false;
-                            if (childChannel.fireChildReadComplete()) {
-                                flushNeeded = true;
-                            }
-                        }
+            DefaultHttp2StreamChannel current = head;
+            while (current != null) {
+                DefaultHttp2StreamChannel childChannel = current;
+                if (childChannel.fireChannelReadPending) {
+                    // Clear early in case fireChildReadComplete() causes it to need to be re-processed
+                    childChannel.fireChannelReadPending = false;
+                    if (childChannel.fireChildReadComplete()) {
+                        flushNeeded = true;
                     }
-                } finally {
-                    channelsToFireChildReadComplete.clear();
                 }
+                childChannel.next = null;
+                current = current.next;
             }
         } finally {
             // We always flush as this is what Http2ConnectionHandler does for now.
@@ -390,8 +411,7 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
         /** {@code true} if a close without an error was initiated **/
         private boolean streamClosedWithoutError;
 
-        /** {@code true} if stream is in {@link Http2MultiplexCodec#channelsToFireChildReadComplete}. **/
-        boolean inStreamsToFireChildReadComplete;
+        boolean fireChannelReadPending;
 
         // Keeps track of flush calls in channelReadComplete(...) and aggregate these.
         private boolean inFireChannelReadComplete;
@@ -404,6 +424,10 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
          */
         @SuppressWarnings("UnusedDeclaration")
         volatile long outboundFlowControlWindow;
+
+        // Holds the reference to the next DefaultHttp2StreamChannel that should be processed in
+        // channelReadComplete(...)
+        DefaultHttp2StreamChannel next;
 
         DefaultHttp2StreamChannel(Http2FrameStream stream) {
             super(ctx.channel());
@@ -418,7 +442,12 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
 
         void streamClosed() {
             streamClosedWithoutError = true;
-            fireChildRead(CLOSE_MESSAGE);
+            if (readInProgress) {
+                unsafe().recvBufAllocHandle().readComplete();
+                close();
+            } else {
+                inboundBuffer().add(CLOSE_MESSAGE);
+            }
             ((Http2MultiplexCodecStream) stream).channel = null;
         }
 
@@ -487,6 +516,7 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
         @Override
         protected void doClose() throws Exception {
             closed = true;
+            fireChannelReadPending = false;
 
             // Only ever send a reset frame if the connection is still alove as otherwise it makes no sense at all
             // anyway.
@@ -528,15 +558,15 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
                 if (m == null) {
                     break;
                 }
-                if (!doRead0(m, allocHandle)) {
-                    allocHandle.readComplete();
+                if (m == CLOSE_MESSAGE) {
                     if (read) {
                         pipeline().fireChannelReadComplete();
                     }
-
+                    allocHandle.readComplete();
                     close();
                     return;
                 }
+                doRead0((Http2Frame) m, allocHandle);
                 read = true;
             } while (allocHandle.continueReading());
 
@@ -664,32 +694,32 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
             return promise;
         }
 
+        private Queue<Object> inboundBuffer() {
+            if (inboundBuffer == null) {
+                inboundBuffer = new ArrayDeque<Object>(4);
+            }
+            return inboundBuffer;
+        }
+
         /**
          * Receive a read message. This does not notify handlers unless a read is in progress on the
          * channel.
          */
-        boolean fireChildRead(final Object msg) {
+        boolean fireChildRead(final Http2Frame frame) {
             assert eventLoop().inEventLoop();
 
             if (closed) {
-                ReferenceCountUtil.release(msg);
+                ReferenceCountUtil.release(frame);
             } else {
                 if (readInProgress) {
                     assert inboundBuffer == null || inboundBuffer.isEmpty();
                     // Check for null because inboundBuffer doesn't support null; we want to be consistent
                     // for what values are supported.
                     RecvByteBufAllocator.Handle allocHandle = unsafe().recvBufAllocHandle();
-                    if (!doRead0(msg, allocHandle)) {
-                        allocHandle.readComplete();
-                        readInProgress = false;
-                        close();
-                    }
+                    doRead0(frame, allocHandle);
                     return allocHandle.continueReading();
                 } else {
-                    if (inboundBuffer == null) {
-                        inboundBuffer = new ArrayDeque<Object>(4);
-                    }
-                    inboundBuffer.add(msg);
+                    inboundBuffer().add(frame);
                 }
             }
 
@@ -723,25 +753,21 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
          * Returns whether reads should continue. The only reason reads shouldn't continue is that the
          * channel was just closed.
          */
-        private boolean doRead0(Object msg, RecvByteBufAllocator.Handle allocHandle) {
+        private void doRead0(Http2Frame frame, RecvByteBufAllocator.Handle allocHandle) {
             int numBytesToBeConsumed = 0;
-            if (msg instanceof Http2DataFrame) {
-                numBytesToBeConsumed = ((Http2DataFrame) msg).flowControlledBytes();
+            if (frame instanceof Http2DataFrame) {
+                numBytesToBeConsumed = ((Http2DataFrame) frame).flowControlledBytes();
                 allocHandle.lastBytesRead(numBytesToBeConsumed);
             } else {
-                if (msg == CLOSE_MESSAGE) {
-                    return false;
-                }
-                if (msg instanceof Http2WindowUpdateFrame) {
-                    Http2WindowUpdateFrame windowUpdate = (Http2WindowUpdateFrame) msg;
+                if (frame instanceof Http2WindowUpdateFrame) {
+                    Http2WindowUpdateFrame windowUpdate = (Http2WindowUpdateFrame) frame;
                     incrementOutboundFlowControlWindow(windowUpdate.windowSizeIncrement());
                     reevaluateWritability();
-                    return true;
                 }
                 allocHandle.lastBytesRead(ARBITRARY_MESSAGE_SIZE);
             }
             allocHandle.incMessagesRead(1);
-            pipeline().fireChannelRead(msg);
+            pipeline().fireChannelRead(frame);
 
             if (numBytesToBeConsumed != 0) {
                 try {
@@ -750,7 +776,6 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
                     pipeline().fireExceptionCaught(e);
                 }
             }
-            return true;
         }
 
         private void reevaluateWritability() {
@@ -793,9 +818,9 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
          */
         private final class Http2StreamChannelConfig extends DefaultChannelConfig {
 
-            // TODO(buchgr): Overwrite the RecvByteBufAllocator. We only need it to implement max messages per read.
             Http2StreamChannelConfig(Channel channel) {
                 super(channel);
+                setRecvByteBufAllocator(Http2StreamChannelRecvByteBufAllocator.INSTANCE);
             }
 
             /**
