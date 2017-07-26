@@ -15,6 +15,9 @@
  */
 package io.netty.handler.codec.http2;
 
+import io.netty.util.internal.UnstableApi;
+
+@UnstableApi
 public final class Http2FrameStreamEvent {
 
     enum State {
