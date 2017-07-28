@@ -339,32 +339,35 @@ public final class Http2FrameCodec extends ChannelDuplexHandler {
      */
     @Override
     public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise) {
-        if (!(msg instanceof Http2Frame)) {
+        if (msg instanceof Http2WindowUpdateFrame) {
+            Http2WindowUpdateFrame frame = (Http2WindowUpdateFrame) msg;
+            writeWindowUpdate(frame.stream().id(), frame.windowSizeIncrement(), promise);
+        } else if (msg instanceof Http2DataFrame) {
+            Http2DataFrame dataFrame = (Http2DataFrame) msg;
+            http2Handler.encoder().writeData(http2HandlerCtx, dataFrame.stream().id(), dataFrame.content(),
+                    dataFrame.padding(), dataFrame.isEndStream(), promise);
+        } else if (msg instanceof Http2HeadersFrame) {
+                writeHeadersFrame((Http2HeadersFrame) msg, promise);
+        } else if (msg instanceof Http2ResetFrame) {
+            Http2ResetFrame rstFrame = (Http2ResetFrame) msg;
+            http2Handler.encoder().writeRstStream(
+                    http2HandlerCtx, rstFrame.stream().id(), rstFrame.errorCode(), promise);
+        } else if (msg instanceof Http2PingFrame) {
+            writePingFrame((Http2PingFrame) msg, promise);
+        } else if (msg instanceof Http2SettingsFrame) {
+            writeSettingsFrame((Http2SettingsFrame) msg, promise);
+        } else if (msg instanceof Http2GoAwayFrame) {
+            writeGoAwayFrame((Http2GoAwayFrame) msg, promise);
+        } else if (!(msg instanceof Http2Frame)) {
             ctx.write(msg, promise);
-            return;
-        }
-        try {
-            if (msg instanceof Http2WindowUpdateFrame) {
-                Http2WindowUpdateFrame frame = (Http2WindowUpdateFrame) msg;
-                writeWindowUpdate(frame.stream().id(), frame.windowSizeIncrement(), promise);
-            } else if (msg instanceof Http2StreamFrame) {
-                writeStreamFrame((Http2StreamFrame) msg, promise);
-            } else if (msg instanceof Http2PingFrame) {
-                writePingFrame((Http2PingFrame) msg, promise);
-            } else if (msg instanceof Http2SettingsFrame) {
-                writeSettingsFrame((Http2SettingsFrame) msg, promise);
-            } else if (msg instanceof Http2GoAwayFrame) {
-                writeGoAwayFrame((Http2GoAwayFrame) msg, promise);
-            } else {
-                throw new UnsupportedMessageTypeException(msg);
-            }
-        } finally {
+        } else {
             ReferenceCountUtil.release(msg);
+            throw new UnsupportedMessageTypeException(msg);
         }
     }
 
     private void writePingFrame(Http2PingFrame pingFrame, ChannelPromise promise) {
-        http2Handler.encoder().writePing(http2HandlerCtx, pingFrame.ack(), pingFrame.content().retain(), promise);
+        http2Handler.encoder().writePing(http2HandlerCtx, pingFrame.ack(), pingFrame.content(), promise);
     }
 
     private void writeWindowUpdate(int streamId, int bytes, ChannelPromise promise) {
@@ -399,6 +402,7 @@ public final class Http2FrameCodec extends ChannelDuplexHandler {
 
     private void writeGoAwayFrame(Http2GoAwayFrame frame, ChannelPromise promise) {
         if (frame.lastStreamId() > -1) {
+            frame.release();
             throw new IllegalArgumentException("Last stream id must not be set on GOAWAY frame");
         }
 
@@ -409,26 +413,7 @@ public final class Http2FrameCodec extends ChannelDuplexHandler {
             lastStreamId = Integer.MAX_VALUE;
         }
         http2Handler.goAway(
-                http2HandlerCtx, lastStreamId, frame.errorCode(), frame.content().retain(), promise);
-    }
-
-    private void writeStreamFrame(Http2StreamFrame frame, ChannelPromise promise) {
-        if (!(frame.stream() instanceof DefaultHttp2FrameStream)) {
-            throw new IllegalArgumentException("A stream object created by the frame codec needs to be set. " + frame);
-        }
-
-        if (frame instanceof Http2DataFrame) {
-            Http2DataFrame dataFrame = (Http2DataFrame) frame;
-            http2Handler.encoder().writeData(http2HandlerCtx, frame.stream().id(), dataFrame.content().retain(),
-                                             dataFrame.padding(), dataFrame.isEndStream(), promise);
-        } else if (frame instanceof Http2HeadersFrame) {
-            writeHeadersFrame((Http2HeadersFrame) frame, promise);
-        } else if (frame instanceof Http2ResetFrame) {
-            Http2ResetFrame rstFrame = (Http2ResetFrame) frame;
-            http2Handler.encoder().writeRstStream(http2HandlerCtx, frame.stream().id(), rstFrame.errorCode(), promise);
-        } else {
-            throw new UnsupportedMessageTypeException(frame);
-        }
+                http2HandlerCtx, lastStreamId, frame.errorCode(), frame.content(), promise);
     }
 
     private void writeHeadersFrame(Http2HeadersFrame headersFrame, final ChannelPromise promise) {
