@@ -339,15 +339,15 @@ public final class Http2FrameCodec extends ChannelDuplexHandler {
      */
     @Override
     public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise) {
-        if (msg instanceof Http2WindowUpdateFrame) {
-            Http2WindowUpdateFrame frame = (Http2WindowUpdateFrame) msg;
-            writeWindowUpdate(frame.stream().id(), frame.windowSizeIncrement(), promise);
-        } else if (msg instanceof Http2DataFrame) {
+        if (msg instanceof Http2DataFrame) {
             Http2DataFrame dataFrame = (Http2DataFrame) msg;
             http2Handler.encoder().writeData(http2HandlerCtx, dataFrame.stream().id(), dataFrame.content(),
                     dataFrame.padding(), dataFrame.isEndStream(), promise);
         } else if (msg instanceof Http2HeadersFrame) {
-                writeHeadersFrame((Http2HeadersFrame) msg, promise);
+            writeHeadersFrame((Http2HeadersFrame) msg, promise);
+        } else if (msg instanceof Http2WindowUpdateFrame) {
+            Http2WindowUpdateFrame frame = (Http2WindowUpdateFrame) msg;
+            writeWindowUpdate(frame.stream().id(), frame.windowSizeIncrement(), promise);
         } else if (msg instanceof Http2ResetFrame) {
             Http2ResetFrame rstFrame = (Http2ResetFrame) msg;
             http2Handler.encoder().writeRstStream(
