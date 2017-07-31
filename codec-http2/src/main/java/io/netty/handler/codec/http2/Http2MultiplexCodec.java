@@ -569,7 +569,7 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
                     // TODO(buchgr): Should we also the change the writability if END_STREAM is set?
                     try {
                         if (msg instanceof Http2StreamFrame) {
-                            Http2StreamFrame frame = validateStreamFrame(msg);
+                            Http2StreamFrame frame = validateStreamFrame((Http2StreamFrame) msg);
                             frame.stream(stream());
 
                             if (!firstFrameWritten && !isStreamIdValid(stream().id())) {
@@ -691,23 +691,23 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
          * channel was just closed.
          */
         private boolean doRead0(Object msg, RecvByteBufAllocator.Handle allocHandle) {
-            if (msg == CLOSE_MESSAGE) {
-                allocHandle.readComplete();
-                pipeline().fireChannelReadComplete();
-                close();
-                return false;
-            }
-            if (msg instanceof Http2WindowUpdateFrame) {
-                Http2WindowUpdateFrame windowUpdate = (Http2WindowUpdateFrame) msg;
-                incrementOutboundFlowControlWindow(windowUpdate.windowSizeIncrement());
-                reevaluateWritability();
-                return true;
-            }
             int numBytesToBeConsumed = 0;
             if (msg instanceof Http2DataFrame) {
                 numBytesToBeConsumed = ((Http2DataFrame) msg).flowControlledBytes();
                 allocHandle.lastBytesRead(numBytesToBeConsumed);
             } else {
+                if (msg == CLOSE_MESSAGE) {
+                    allocHandle.readComplete();
+                    pipeline().fireChannelReadComplete();
+                    close();
+                    return false;
+                }
+                if (msg instanceof Http2WindowUpdateFrame) {
+                    Http2WindowUpdateFrame windowUpdate = (Http2WindowUpdateFrame) msg;
+                    incrementOutboundFlowControlWindow(windowUpdate.windowSizeIncrement());
+                    reevaluateWritability();
+                    return true;
+                }
                 allocHandle.lastBytesRead(ARBITRARY_MESSAGE_SIZE);
             }
             allocHandle.incMessagesRead(1);
@@ -730,20 +730,16 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
         }
 
         private void bytesConsumed(final int bytes) {
-            ctx.write(new DefaultHttp2WindowUpdateFrame(bytes).stream(stream()));
+            // We use an Unsafe.voidPromise() as we are not interested in the result at all.
+            ctx.write(new DefaultHttp2WindowUpdateFrame(bytes).stream(stream()), ctx.channel().unsafe().voidPromise());
         }
 
-        private Http2StreamFrame validateStreamFrame(Object msg) {
-            if (!(msg instanceof Http2StreamFrame)) {
-                String msgString = msg.toString();
-                ReferenceCountUtil.release(msg);
-                throw new IllegalArgumentException("Message must be a Http2StreamFrame: " + msgString);
-            }
-            Http2StreamFrame frame = (Http2StreamFrame) msg;
-            if (frame.stream() != null) {
-                String msgString = msg.toString();
+        private Http2StreamFrame validateStreamFrame(Http2StreamFrame frame) {
+            if (frame.stream() != null && frame.stream() != stream) {
+                String msgString = frame.toString();
                 ReferenceCountUtil.release(frame);
-                throw new IllegalArgumentException("Stream must not be set on the frame: " + msgString);
+                throw new IllegalArgumentException(
+                        "Stream " + frame.stream() + " must not be set on the frame: " + msgString);
             }
             return frame;
         }
