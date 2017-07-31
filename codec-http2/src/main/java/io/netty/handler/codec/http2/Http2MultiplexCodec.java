@@ -485,9 +485,12 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
         protected void doClose() throws Exception {
             closed = true;
 
-            if (!streamClosedWithoutError && isStreamIdValid(stream().id())) {
+            // Only ever send a reset frame if the connection is still alove as otherwise it makes no sense at all
+            // anyway.
+            if (ctx.channel().isActive() && !streamClosedWithoutError && isStreamIdValid(stream().id())) {
                 Http2StreamFrame resetFrame = new DefaultHttp2ResetFrame(Http2Error.CANCEL).stream(stream());
-                ctx.writeAndFlush(resetFrame);
+                ctx.write(resetFrame);
+                mayFlush();
             }
 
             while (!inboundBuffer.isEmpty()) {
