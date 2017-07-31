@@ -147,6 +147,7 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
     ChannelHandlerContext ctx;
 
     private int initialOutboundStreamWindow = Http2CodecUtil.DEFAULT_WINDOW_SIZE;
+    private boolean flushNeeded;
 
     /**
      * Construct a new handler whose child channels run in a different event loop.
@@ -301,7 +302,9 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
     private void fireChildReadAndRegister(DefaultHttp2StreamChannel childChannel, Http2StreamFrame frame) {
         // Can't use childChannel.fireChannelRead() as it would fire independent of whether
         // channel.read() had been called.
-        childChannel.fireChildRead(frame);
+        if (childChannel.fireChildRead(frame)) {
+            flushNeeded = true;
+        }
         if (!childChannel.inStreamsToFireChildReadComplete) {
             channelsToFireChildReadComplete.add(childChannel);
             childChannel.inStreamsToFireChildReadComplete = true;
@@ -316,7 +319,7 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
         // If we have many child channel we can optimize for the case when multiple call flush() in
         // channelReadComplete(...) callbacks and only do it once as otherwise we will end-up with multiple
         // write calls on the socket which is expensive.
-        boolean needsFlush = false;
+        boolean needsFlush = flushNeeded;
         try {
             for (int i = 0; i < channelsToFireChildReadComplete.size(); i++) {
                 DefaultHttp2StreamChannel childChannel = channelsToFireChildReadComplete.get(i);
@@ -328,6 +331,7 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
             }
         } finally {
             channelsToFireChildReadComplete.clear();
+
             if (needsFlush) {
                 ctx.flush();
             }
@@ -410,7 +414,9 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
 
         void streamClosed() {
             streamClosedWithoutError = true;
-            fireChildRead(CLOSE_MESSAGE);
+            if (fireChildRead(CLOSE_MESSAGE)) {
+                mayFlush();
+            }
         }
 
         @Override
@@ -573,6 +579,10 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
         }
 
         private void mayFlush() {
+            // If we are current channelReadComplete(...) call we should just mark this Channel with a flush pending.
+            // We will ensure we trigger ctx.flush() after we processed all Channels later on and so aggregate the
+            // flushes. This is done as ctx.flush() is expensive when as it may trigger an write(...) or writev(...)
+            // operation on the socket.
             if (inFireChannelReadComplete) {
                 flushPending = true;
             } else {
@@ -582,14 +592,16 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
 
         /**
          * Receive a read message. This does not notify handlers unless a read is in progress on the
-         * channel. May be called from any thread.
+         * channel.
+         *
+         * If returns {@code true} we will also have a flush pending for this channel.
          */
-        void fireChildRead(final Object msg) {
+        boolean fireChildRead(final Object msg) {
             assert eventLoop().inEventLoop();
 
             if (closed) {
                 ReferenceCountUtil.release(msg);
-                return;
+                return false;
             }
             if (readInProgress) {
                 assert inboundBuffer.isEmpty();
@@ -598,13 +610,12 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
                 RecvByteBufAllocator.Handle allocHandle = unsafe().recvBufAllocHandle();
                 readInProgress = doRead0(checkNotNull(msg, "msg"), allocHandle);
                 if (!allocHandle.continueReading()) {
-                    if (fireChildReadComplete()) {
-                        ctx.flush();
-                    }
+                   return fireChildReadComplete();
                 }
             } else {
                 inboundBuffer.add(msg);
             }
+            return false;
         }
 
         boolean fireChildReadComplete() {
@@ -836,7 +847,9 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
                      * Return the flow control window of the failed data frame. We expect this code to be rarely
                      * executed and by implementing it as a window update, we don't have to worry about thread-safety.
                      */
-                    channel.fireChildRead(new DefaultHttp2WindowUpdateFrame(bytes).stream(channel.stream()));
+                    if (channel.fireChildRead(new DefaultHttp2WindowUpdateFrame(bytes).stream(channel.stream()))) {
+                        channel.ctx.flush();
+                    }
                 }
             }
         }
