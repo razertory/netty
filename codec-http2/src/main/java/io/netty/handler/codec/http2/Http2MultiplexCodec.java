@@ -586,7 +586,6 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
                                             promise.setSuccess();
                                         } else {
                                             promise.setFailure(future.cause());
-                                            pipeline().fireExceptionCaught(future.cause());
                                             close();
                                         }
                                     }
