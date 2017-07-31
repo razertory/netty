@@ -105,19 +105,7 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
     private static final ChannelFutureListener CHILD_CHANNEL_REGISTRATION_LISTENER = new ChannelFutureListener() {
         @Override
         public void operationComplete(ChannelFuture future) throws Exception {
-            // Handle any errors that occurred on the local thread while registering. Even though
-            // failures can happen after this point, they will be handled by the channel by closing the
-            // childChannel.
-            DefaultHttp2StreamChannel childChannel = (DefaultHttp2StreamChannel) future.channel();
-            if (future.cause() != null) {
-                if (childChannel.isRegistered()) {
-                    childChannel.close();
-                } else {
-                    childChannel.unsafe().closeForcibly();
-                }
-            } else {
-                childChannel.setWritable();
-            }
+            registerDone(future);
         }
     };
 
@@ -199,6 +187,22 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
             throw new IllegalArgumentException("The handler must be Sharable");
         }
         return handler;
+    }
+
+    private static void registerDone(ChannelFuture future) {
+        // Handle any errors that occurred on the local thread while registering. Even though
+        // failures can happen after this point, they will be handled by the channel by closing the
+        // childChannel.
+        DefaultHttp2StreamChannel childChannel = (DefaultHttp2StreamChannel) future.channel();
+        if (future.cause() != null) {
+            if (childChannel.isRegistered()) {
+                childChannel.close();
+            } else {
+                childChannel.unsafe().closeForcibly();
+            }
+        } else {
+            childChannel.setWritable();
+        }
     }
 
     @Override
@@ -287,7 +291,11 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
         childChannel.pipeline().addLast(inboundStreamHandler);
 
         ChannelFuture future = ctx.channel().eventLoop().register(childChannel);
-        future.addListener(CHILD_CHANNEL_REGISTRATION_LISTENER);
+        if (future.isDone()) {
+            registerDone(future);
+        } else {
+            future.addListener(CHILD_CHANNEL_REGISTRATION_LISTENER);
+        }
     }
 
     // TODO: This is most likely not the best way to expose this, need to think more about it.
@@ -345,20 +353,25 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
         // If we have many child channel we can optimize for the case when multiple call flush() in
         // channelReadComplete(...) callbacks and only do it once as otherwise we will end-up with multiple
         // write calls on the socket which is expensive.
+        int size = channelsToFireChildReadComplete.size();
         try {
-            for (int i = 0; i < channelsToFireChildReadComplete.size(); i++) {
-                DefaultHttp2StreamChannel childChannel = channelsToFireChildReadComplete.get(i);
-                if (childChannel.inStreamsToFireChildReadComplete) {
-                    // Clear early in case fireChildReadComplete() causes it to need to be re-processed
-                    childChannel.inStreamsToFireChildReadComplete = false;
-                    if (childChannel.fireChildReadComplete()) {
-                        flushNeeded = true;
+            if (size != 0) {
+                try {
+                    for (int i = 0; i < size; ++i) {
+                        DefaultHttp2StreamChannel childChannel = channelsToFireChildReadComplete.get(i);
+                        if (childChannel.inStreamsToFireChildReadComplete) {
+                            // Clear early in case fireChildReadComplete() causes it to need to be re-processed
+                            childChannel.inStreamsToFireChildReadComplete = false;
+                            if (childChannel.fireChildReadComplete()) {
+                                flushNeeded = true;
+                            }
+                        }
                     }
+                } finally {
+                    channelsToFireChildReadComplete.clear();
                 }
             }
         } finally {
-            channelsToFireChildReadComplete.clear();
-
             if (flushNeeded) {
                 flushNeeded = false;
                 ctx.flush();
@@ -369,12 +382,13 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
     private final class DefaultHttp2StreamChannel extends AbstractChannel implements Http2StreamChannel {
 
         private final Http2StreamChannelConfig config = new Http2StreamChannelConfig(this);
-        private Queue<Object> inboundBuffer;
         private final Http2FrameStream stream;
 
+        // Needs to be volatile as it will be read from multiple threads.
         private volatile boolean closed;
         private boolean readInProgress;
         private MessageSizeEstimator.Handle sizeEstimatorHandle;
+        private Queue<Object> inboundBuffer;
 
         /** {@code true} after the first HEADERS frame has been written **/
         private boolean firstFrameWritten;
