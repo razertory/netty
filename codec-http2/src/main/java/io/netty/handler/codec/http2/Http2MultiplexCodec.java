@@ -313,13 +313,25 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
      */
     @Override
     public void channelReadComplete(ChannelHandlerContext ctx) {
-        for (int i = 0; i < channelsToFireChildReadComplete.size(); i++) {
-            DefaultHttp2StreamChannel childChannel = channelsToFireChildReadComplete.get(i);
-            // Clear early in case fireChildReadComplete() causes it to need to be re-processed
-            childChannel.inStreamsToFireChildReadComplete = false;
-            childChannel.fireChildReadComplete();
+        // If we have many child channel we can optimize for the case when multiple call flush() in
+        // channelReadComplete(...) callbacks and only do it once as otherwise we will end-up with multiple
+        // write calls on the socket which is expensive.
+        boolean needsFlush = false;
+        try {
+            for (int i = 0; i < channelsToFireChildReadComplete.size(); i++) {
+                DefaultHttp2StreamChannel childChannel = channelsToFireChildReadComplete.get(i);
+                // Clear early in case fireChildReadComplete() causes it to need to be re-processed
+                childChannel.inStreamsToFireChildReadComplete = false;
+                if (childChannel.fireChildReadComplete() && !needsFlush) {
+                    needsFlush = true;
+                }
+            }
+        } finally {
+            channelsToFireChildReadComplete.clear();
+            if (needsFlush) {
+                ctx.flush();
+            }
         }
-        channelsToFireChildReadComplete.clear();
     }
 
     private static final class DefaultHttp2StreamChannel extends AbstractChannel implements Http2StreamChannel {
@@ -365,6 +377,10 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
 
         /** {@code true} if stream is in {@link Http2MultiplexCodec#channelsToFireChildReadComplete}. **/
         boolean inStreamsToFireChildReadComplete;
+
+        // Keeps track of flush calls in channelReadComplete(...) and aggregate these.
+        private boolean inFireChannelReadComplete;
+        private boolean flushPending;
 
         /**
          * The flow control window of the remote side i.e. the number of bytes this channel is allowed to send to the
@@ -552,6 +568,14 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
                 }
             } finally {
                 // ensure we always flush even if the write loop throws.
+                mayFlush();
+            }
+        }
+
+        private void mayFlush() {
+            if (inFireChannelReadComplete) {
+                flushPending = true;
+            } else {
                 ctx.flush();
             }
         }
@@ -574,20 +598,29 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
                 RecvByteBufAllocator.Handle allocHandle = unsafe().recvBufAllocHandle();
                 readInProgress = doRead0(checkNotNull(msg, "msg"), allocHandle);
                 if (!allocHandle.continueReading()) {
-                    fireChildReadComplete();
+                    if (fireChildReadComplete()) {
+                        ctx.flush();
+                    }
                 }
             } else {
                 inboundBuffer.add(msg);
             }
         }
 
-        void fireChildReadComplete() {
+        boolean fireChildReadComplete() {
             assert eventLoop().inEventLoop();
 
-            if (readInProgress) {
-                readInProgress = false;
-                unsafe().recvBufAllocHandle().readComplete();
-                pipeline().fireChannelReadComplete();
+            try {
+                if (readInProgress) {
+                    inFireChannelReadComplete = true;
+                    readInProgress = false;
+                    unsafe().recvBufAllocHandle().readComplete();
+                    pipeline().fireChannelReadComplete();
+                }
+                return flushPending;
+            } finally {
+                inFireChannelReadComplete = false;
+                flushPending = false;
             }
         }
 
