@@ -108,13 +108,15 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
             // Handle any errors that occurred on the local thread while registering. Even though
             // failures can happen after this point, they will be handled by the channel by closing the
             // childChannel.
-            Channel childChannel = future.channel();
+            DefaultHttp2StreamChannel childChannel = (DefaultHttp2StreamChannel) future.channel();
             if (future.cause() != null) {
                 if (childChannel.isRegistered()) {
                     childChannel.close();
                 } else {
                     childChannel.unsafe().closeForcibly();
                 }
+            } else {
+                childChannel.setWritable();
             }
         }
     };
@@ -282,21 +284,13 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
         }
     }
 
-    private DefaultHttp2StreamChannel onStreamActive(Http2FrameStream stream) {
-        DefaultHttp2StreamChannel childChannel = channels.get(stream);
-        if (childChannel == null) {
-            childChannel = newStreamChannel(stream);
+    private void onStreamActive(Http2FrameStream stream) {
+        DefaultHttp2StreamChannel childChannel = newStreamChannel(stream);
 
-            childChannel.pipeline().addLast(inboundStreamHandler);
+        childChannel.pipeline().addLast(inboundStreamHandler);
 
-            ChannelFuture future = ctx.channel().eventLoop().register(childChannel);
-            future.addListener(CHILD_CHANNEL_REGISTRATION_LISTENER);
-        }
-
-        assert !childChannel.isWritable();
-        childChannel.incrementOutboundFlowControlWindow(initialOutboundStreamWindow);
-        childChannel.pipeline().fireChannelWritabilityChanged();
-        return childChannel;
+        ChannelFuture future = ctx.channel().eventLoop().register(childChannel);
+        future.addListener(CHILD_CHANNEL_REGISTRATION_LISTENER);
     }
 
     // TODO: This is most likely not the best way to expose this, need to think more about it.
@@ -304,8 +298,9 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
         return newStreamChannel(newStream());
     }
 
-    private  DefaultHttp2StreamChannel newStreamChannel(Http2FrameStream stream) {
+    private DefaultHttp2StreamChannel newStreamChannel(Http2FrameStream stream) {
         DefaultHttp2StreamChannel childChannel = new DefaultHttp2StreamChannel(stream);
+        // TODO: Maybe assert that this return null ?
         channels.put(stream, childChannel);
         return childChannel;
     }
@@ -525,6 +520,12 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
             pipeline().fireChannelReadComplete();
         }
 
+        void setWritable() {
+            assert !isWritable();
+            incrementOutboundFlowControlWindow(initialOutboundStreamWindow);
+            pipeline().fireChannelWritabilityChanged();
+        }
+
         @Override
         protected void doWrite(ChannelOutboundBuffer in) throws Exception {
             if (closed) {
@@ -581,9 +582,8 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
                                     @Override
                                     public void operationComplete(ChannelFuture future) throws Exception {
                                         if (future.isSuccess()) {
-                                            Http2FrameStream stream = stream();
-                                            onStreamActive(stream);
                                             promise.setSuccess();
+                                            setWritable();
                                         } else {
                                             promise.setFailure(future.cause());
                                             close();
