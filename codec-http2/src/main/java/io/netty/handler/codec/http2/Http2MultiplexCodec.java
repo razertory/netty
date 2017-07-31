@@ -300,12 +300,14 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
     }
 
     private void fireChildReadAndRegister(DefaultHttp2StreamChannel childChannel, Http2StreamFrame frame) {
-        // Can't use childChannel.fireChannelRead() as it would fire independent of whether
-        // channel.read() had been called.
-        if (childChannel.fireChildRead(frame)) {
-            flushNeeded = true;
-        }
-        if (!childChannel.inStreamsToFireChildReadComplete) {
+        if (!childChannel.fireChildRead(frame)) {
+            if (childChannel.fireChildReadComplete()) {
+                flushNeeded = true;
+            }
+
+            // Just called fireChildReadComplete() no need to do again in channelReadComplete(...)
+            childChannel.inStreamsToFireChildReadComplete = false;
+        } else if (!childChannel.inStreamsToFireChildReadComplete) {
             channelsToFireChildReadComplete.add(childChannel);
             childChannel.inStreamsToFireChildReadComplete = true;
         }
@@ -319,20 +321,22 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
         // If we have many child channel we can optimize for the case when multiple call flush() in
         // channelReadComplete(...) callbacks and only do it once as otherwise we will end-up with multiple
         // write calls on the socket which is expensive.
-        boolean needsFlush = flushNeeded;
         try {
             for (int i = 0; i < channelsToFireChildReadComplete.size(); i++) {
                 DefaultHttp2StreamChannel childChannel = channelsToFireChildReadComplete.get(i);
-                // Clear early in case fireChildReadComplete() causes it to need to be re-processed
-                childChannel.inStreamsToFireChildReadComplete = false;
-                if (childChannel.fireChildReadComplete() && !needsFlush) {
-                    needsFlush = true;
+                if (childChannel.inStreamsToFireChildReadComplete) {
+                    // Clear early in case fireChildReadComplete() causes it to need to be re-processed
+                    childChannel.inStreamsToFireChildReadComplete = false;
+                    if (childChannel.fireChildReadComplete()) {
+                        flushNeeded = true;
+                    }
                 }
             }
         } finally {
             channelsToFireChildReadComplete.clear();
 
-            if (needsFlush) {
+            if (flushNeeded) {
+                flushNeeded = false;
                 ctx.flush();
             }
         }
@@ -414,9 +418,7 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
 
         void streamClosed() {
             streamClosedWithoutError = true;
-            if (fireChildRead(CLOSE_MESSAGE)) {
-                mayFlush();
-            }
+            fireChildRead(CLOSE_MESSAGE);
         }
 
         @Override
@@ -593,34 +595,30 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
         /**
          * Receive a read message. This does not notify handlers unless a read is in progress on the
          * channel.
-         *
-         * If returns {@code true} we will also have a flush pending for this channel.
          */
         boolean fireChildRead(final Object msg) {
             assert eventLoop().inEventLoop();
 
             if (closed) {
                 ReferenceCountUtil.release(msg);
-                return false;
-            }
-            if (readInProgress) {
-                assert inboundBuffer.isEmpty();
-                // Check for null because inboundBuffer doesn't support null; we want to be consistent
-                // for what values are supported.
-                RecvByteBufAllocator.Handle allocHandle = unsafe().recvBufAllocHandle();
-                readInProgress = doRead0(checkNotNull(msg, "msg"), allocHandle);
-                if (!allocHandle.continueReading()) {
-                   return fireChildReadComplete();
-                }
             } else {
-                inboundBuffer.add(msg);
+                if (readInProgress) {
+                    assert inboundBuffer.isEmpty();
+                    // Check for null because inboundBuffer doesn't support null; we want to be consistent
+                    // for what values are supported.
+                    RecvByteBufAllocator.Handle allocHandle = unsafe().recvBufAllocHandle();
+                    readInProgress = doRead0(checkNotNull(msg, "msg"), allocHandle);
+                    return allocHandle.continueReading();
+                } else {
+                    inboundBuffer.add(msg);
+                }
             }
+
             return false;
         }
 
         boolean fireChildReadComplete() {
             assert eventLoop().inEventLoop();
-
             try {
                 if (readInProgress) {
                     inFireChannelReadComplete = true;
@@ -668,6 +666,7 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
             }
             allocHandle.incMessagesRead(1);
             pipeline().fireChannelRead(msg);
+
             if (numBytesToBeConsumed != 0) {
                 bytesConsumed(numBytesToBeConsumed);
             }
@@ -847,9 +846,7 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
                      * Return the flow control window of the failed data frame. We expect this code to be rarely
                      * executed and by implementing it as a window update, we don't have to worry about thread-safety.
                      */
-                    if (channel.fireChildRead(new DefaultHttp2WindowUpdateFrame(bytes).stream(channel.stream()))) {
-                        channel.ctx.flush();
-                    }
+                    channel.fireChildRead(new DefaultHttp2WindowUpdateFrame(bytes).stream(channel.stream()));
                 }
             }
         }
