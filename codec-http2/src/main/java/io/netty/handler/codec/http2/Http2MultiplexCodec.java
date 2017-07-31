@@ -41,10 +41,10 @@ import java.net.SocketAddress;
 import java.nio.channels.ClosedChannelException;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Queue;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLongFieldUpdater;
 
 import static io.netty.handler.codec.http2.Http2CodecUtil.isOutboundStream;
@@ -170,7 +170,7 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
 
     // TODO: Use some sane initial capacity.
     private final Map<Http2FrameStream, DefaultHttp2StreamChannel> channels =
-            new ConcurrentHashMap<Http2FrameStream, DefaultHttp2StreamChannel>();
+            new HashMap<Http2FrameStream, DefaultHttp2StreamChannel>();
     private final List<DefaultHttp2StreamChannel> channelsToFireChildReadComplete =
             new ArrayList<DefaultHttp2StreamChannel>();
 
