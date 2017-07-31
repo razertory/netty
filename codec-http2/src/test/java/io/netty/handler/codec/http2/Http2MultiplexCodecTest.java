@@ -19,6 +19,7 @@ import io.netty.buffer.ByteBufUtil;
 import io.netty.buffer.Unpooled;
 import io.netty.buffer.UnpooledByteBufAllocator;
 import io.netty.channel.Channel;
+import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelHandler;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
@@ -337,13 +338,15 @@ public class Http2MultiplexCodecTest {
         Channel childChannel = newOutboundStream();
         assertTrue(childChannel.isActive());
 
-        childChannel.writeAndFlush(new DefaultHttp2HeadersFrame(new DefaultHttp2Headers()));
+        ChannelFuture future = childChannel.writeAndFlush(new DefaultHttp2HeadersFrame(new DefaultHttp2Headers()));
         parentChannel.flush();
 
         assertFalse(childChannel.isActive());
         assertFalse(childChannel.isOpen());
 
         inboundHandler.checkException();
+
+        future.syncUninterruptibly();
     }
 
     @Test
