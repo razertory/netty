@@ -41,7 +41,7 @@ import java.net.SocketAddress;
 import java.nio.channels.ClosedChannelException;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Queue;
@@ -170,7 +170,7 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
 
     // TODO: Use some sane initial capacity.
     private final Map<Http2FrameStream, DefaultHttp2StreamChannel> channels =
-            new HashMap<Http2FrameStream, DefaultHttp2StreamChannel>();
+            new IdentityHashMap<Http2FrameStream, DefaultHttp2StreamChannel>();
     private final List<DefaultHttp2StreamChannel> channelsToFireChildReadComplete =
             new ArrayList<DefaultHttp2StreamChannel>();
 
@@ -238,11 +238,6 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
 
     @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
-        if (!(msg instanceof Http2Frame)) {
-            ctx.fireChannelRead(msg);
-            return;
-        }
-
         if (msg instanceof Http2StreamFrame) {
             channelReadStreamFrame((Http2StreamFrame) msg);
         } else if (msg instanceof Http2GoAwayFrame) {
@@ -268,6 +263,8 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
             if (settings.initialWindowSize() != null) {
                 initialOutboundStreamWindow = settings.initialWindowSize();
             }
+        } else {
+            ctx.fireChannelRead(msg);
         }
     }
 
@@ -372,10 +369,10 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
     private final class DefaultHttp2StreamChannel extends AbstractChannel implements Http2StreamChannel {
 
         private final Http2StreamChannelConfig config = new Http2StreamChannelConfig(this);
-        private final Queue<Object> inboundBuffer = new ArrayDeque<Object>(4);
+        private Queue<Object> inboundBuffer;
         private final Http2FrameStream stream;
 
-        private boolean closed;
+        private volatile boolean closed;
         private boolean readInProgress;
         private MessageSizeEstimator.Handle sizeEstimatorHandle;
 
@@ -487,8 +484,15 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
                 mayFlush();
             }
 
-            while (!inboundBuffer.isEmpty()) {
-                ReferenceCountUtil.release(inboundBuffer.poll());
+            if (inboundBuffer == null) {
+                return;
+            }
+            for (;;) {
+                Object msg = inboundBuffer.poll();
+                if (msg == null) {
+                    break;
+                }
+                ReferenceCountUtil.release(msg);
             }
         }
 
@@ -500,7 +504,7 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
 
             final RecvByteBufAllocator.Handle allocHandle = unsafe().recvBufAllocHandle();
             allocHandle.reset(config());
-            if (inboundBuffer.isEmpty()) {
+            if (inboundBuffer == null || inboundBuffer.isEmpty()) {
                 readInProgress = true;
                 return;
             }
@@ -649,13 +653,16 @@ public class Http2MultiplexCodec extends Http2ChannelDuplexHandler {
                 ReferenceCountUtil.release(msg);
             } else {
                 if (readInProgress) {
-                    assert inboundBuffer.isEmpty();
+                    assert inboundBuffer == null || inboundBuffer.isEmpty();
                     // Check for null because inboundBuffer doesn't support null; we want to be consistent
                     // for what values are supported.
                     RecvByteBufAllocator.Handle allocHandle = unsafe().recvBufAllocHandle();
-                    readInProgress = doRead0(checkNotNull(msg, "msg"), allocHandle);
+                    readInProgress = doRead0(msg, allocHandle);
                     return allocHandle.continueReading();
                 } else {
+                    if (inboundBuffer == null) {
+                        inboundBuffer = new ArrayDeque<Object>(4);
+                    }
                     inboundBuffer.add(msg);
                 }
             }
