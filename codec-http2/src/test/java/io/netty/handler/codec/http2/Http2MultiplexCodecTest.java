@@ -573,11 +573,7 @@ public class Http2MultiplexCodecTest {
         }
 
         void onChannelReadComplete() {
-            try {
-                onChannelReadComplete(ctx);
-            } catch (Http2Exception e) {
-                throw new IllegalStateException(e);
-            }
+            onChannelReadComplete(ctx);
         }
 
         void onHttp2StreamActive(Http2FrameStream stream) {
