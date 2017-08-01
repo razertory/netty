@@ -29,12 +29,19 @@ public final class Http2Codec extends ChannelDuplexHandler {
     private final Http2FrameCodec frameCodec;
     private final Http2MultiplexCodec multiplexCodec;
 
-    Http2Codec(boolean server, ChannelHandler inboundStreamHandler, Http2FrameWriter frameWriter,
+    Http2Codec(boolean server, ChannelHandler inboundStreamHandler,
+               Http2HeadersEncoder.SensitivityDetector headersSensitivityDetector,
                Http2FrameLogger frameLogger, Http2Settings initialSettings) {
         Http2FrameCodecBuilder frameBuilder = server
                 ? Http2FrameCodecBuilder.forServer()
                 : Http2FrameCodecBuilder.forClient();
-        frameBuilder.frameWriter(frameWriter).frameLogger(frameLogger).initialSettings(initialSettings);
+        frameBuilder.initialSettings(initialSettings);
+        if (frameLogger != null) {
+            frameBuilder.frameLogger(frameLogger);
+        }
+        if (headersSensitivityDetector != null) {
+            frameBuilder.headerSensitivityDetector(headersSensitivityDetector);
+        }
         frameCodec = frameBuilder.build();
         multiplexCodec = new Http2MultiplexCodec(server, inboundStreamHandler);
     }

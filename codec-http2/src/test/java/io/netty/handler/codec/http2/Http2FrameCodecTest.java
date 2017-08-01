@@ -20,7 +20,6 @@ import io.netty.buffer.Unpooled;
 import io.netty.buffer.UnpooledByteBufAllocator;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelFutureListener;
-import io.netty.channel.ChannelHandler;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelPromise;
 import io.netty.channel.embedded.EmbeddedChannel;
@@ -473,7 +472,7 @@ public class Http2FrameCodecTest {
 
     @Test
     public void newOutboundStreamsShouldBeBuffered() throws Exception {
-        setUp(Http2FrameCodecBuilder.forServer().bufferOutboundStreams(true),
+        setUp(Http2FrameCodecBuilder.forServer().encoderEnforceMaxConcurrentStreams(true),
               new Http2Settings().maxConcurrentStreams(1));
 
         Http2FrameStream stream1 = frameCodec.newStream();
@@ -555,7 +554,7 @@ public class Http2FrameCodecTest {
 
     @Test
     public void iterateActiveStreams() throws Exception {
-        setUp(Http2FrameCodecBuilder.forServer().bufferOutboundStreams(true),
+        setUp(Http2FrameCodecBuilder.forServer().encoderEnforceMaxConcurrentStreams(true),
               new Http2Settings().maxConcurrentStreams(1));
 
         frameListener.onHeadersRead(http2HandlerCtx, 3, request, 0, false);
