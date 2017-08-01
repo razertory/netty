@@ -26,6 +26,7 @@ import io.netty.util.concurrent.FastThreadLocal;
 import io.netty.util.internal.InternalThreadLocalMap;
 import io.netty.util.internal.PromiseNotificationUtil;
 import io.netty.util.internal.SystemPropertyUtil;
+import io.netty.util.internal.UnstableApi;
 import io.netty.util.internal.logging.InternalLogger;
 import io.netty.util.internal.logging.InternalLoggerFactory;
 
@@ -269,6 +270,7 @@ public final class ChannelOutboundBuffer {
      * does not release the message or complete the promise. If no flushed message exist, this method returns
      * {@code null}.
      */
+    @UnstableApi
     public ChannelPromise steal() {
         Entry e = flushedEntry;
         if (e == null) {

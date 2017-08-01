@@ -705,9 +705,8 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
          * Receive a read message. This does not notify handlers unless a read is in progress on the
          * channel.
          */
-        boolean fireChildRead(final Http2Frame frame) {
+        boolean fireChildRead(Http2Frame frame) {
             assert eventLoop().inEventLoop();
-
             if (closed) {
                 ReferenceCountUtil.release(frame);
             } else {
@@ -801,6 +800,13 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
                         "Stream " + frame.stream() + " must not be set on the frame: " + msgString);
             }
             return frame;
+        }
+
+        @Override
+        protected void doRegister() throws Exception {
+            if (isRegistered()) {
+                throw new UnsupportedOperationException("Re-register is not supported");
+            }
         }
 
         private final class Http2ChannelUnsafe extends AbstractUnsafe {
