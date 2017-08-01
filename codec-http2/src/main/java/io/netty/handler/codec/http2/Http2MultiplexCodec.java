@@ -138,19 +138,16 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
 
         static final FlowControlledFrameSizeEstimator INSTANCE = new FlowControlledFrameSizeEstimator();
 
-        private static final class EstimatorHandle implements MessageSizeEstimator.Handle {
-
-            static final EstimatorHandle INSTANCE = new EstimatorHandle();
-
+        static final MessageSizeEstimator.Handle HANDLE_INSTANCE = new MessageSizeEstimator.Handle() {
             @Override
             public int size(Object msg) {
                 return msg instanceof Http2DataFrame ? ((Http2DataFrame) msg).flowControlledBytes() : 0;
             }
-        }
+        };
 
         @Override
         public Handle newHandle() {
-            return EstimatorHandle.INSTANCE;
+            return HANDLE_INSTANCE;
         }
     }
 
@@ -312,7 +309,7 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
                 }
             });
         } catch (Http2Exception e) {
-            // TODO: Handle me
+            // TODO: log me ?
             ctx.close();
         } finally {
             // We need to ensure we release the goAwayFrame.
@@ -385,7 +382,6 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
         // Needs to be volatile as it will be read from multiple threads.
         private volatile boolean closed;
         private boolean readInProgress;
-        private MessageSizeEstimator.Handle sizeEstimatorHandle;
         private Queue<Object> inboundBuffer;
 
         /** {@code true} after the first HEADERS frame has been written **/
@@ -448,12 +444,14 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
 
         @Override
         public boolean isWritable() {
-            return isStreamIdValid(stream.id())
+            if (isStreamIdValid(stream.id())
                     // So that the channel doesn't become active before the initial flow control window has been set.
-                    && outboundFlowControlWindow > 0
-                    // Could be null if channel closed.
-                    && unsafe().outboundBuffer() != null
-                    && unsafe().outboundBuffer().isWritable();
+                    && outboundFlowControlWindow > 0) {
+                // Could be null if channel closed.
+                ChannelOutboundBuffer buffer = unsafe().outboundBuffer();
+                return buffer != null && buffer.isWritable();
+            }
+            return false;
         }
 
         @Override
@@ -523,15 +521,23 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
                 return;
             }
 
+            boolean read = false;
+
             do {
                 Object m = inboundBuffer.poll();
                 if (m == null) {
                     break;
                 }
                 if (!doRead0(m, allocHandle)) {
-                    // Channel closed, and already cleaned up.
+                    allocHandle.readComplete();
+                    if (read) {
+                        pipeline().fireChannelReadComplete();
+                    }
+
+                    close();
                     return;
                 }
+                read = true;
             } while (allocHandle.continueReading());
 
             allocHandle.readComplete();
@@ -551,9 +557,6 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
             }
 
             try {
-                if (sizeEstimatorHandle == null) {
-                    sizeEstimatorHandle = config().getMessageSizeEstimator().newHandle();
-                }
                 for (;;) {
                     final Object msg = in.current();
                     if (msg == null) {
@@ -564,7 +567,7 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
                         continue;
                     }
 
-                    final int bytes = sizeEstimatorHandle.size(msg);
+                    final int bytes = FlowControlledFrameSizeEstimator.HANDLE_INSTANCE.size(msg);
 
                     /*
                      * The flow control window needs to be decrement before stealing the message from the buffer (and
@@ -625,11 +628,10 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
                                     promise.setFailure(future.cause());
                                     if (bytes > 0 && isActive()) {
                                         /*
-                                         * Return the flow control window of the failed data frame. We expect this code
-                                         * to be rarely executed and by implementing it as a window update, we don't
-                                         * have to worry about thread-safety.
+                                         * Return the flow control window of the failed data frame.
                                          */
-                                        fireChildRead(new DefaultHttp2WindowUpdateFrame(bytes).stream(stream()));
+                                        incrementOutboundFlowControlWindow(bytes);
+                                        reevaluateWritability();
                                     }
                                 }
                             }
@@ -644,7 +646,7 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
             }
         }
 
-        private void flush0() throws Http2Exception {
+        private void flush0()  {
             // If we are current channelReadComplete(...) call we should just mark this Channel with a flush pending.
             // We will ensure we trigger ctx.flush() after we processed all Channels later on and so aggregate the
             // flushes. This is done as ctx.flush() is expensive when as it may trigger an write(...) or writev(...)
@@ -677,7 +679,11 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
                     // Check for null because inboundBuffer doesn't support null; we want to be consistent
                     // for what values are supported.
                     RecvByteBufAllocator.Handle allocHandle = unsafe().recvBufAllocHandle();
-                    readInProgress = doRead0(msg, allocHandle);
+                    if (!doRead0(msg, allocHandle)) {
+                        allocHandle.readComplete();
+                        readInProgress = false;
+                        close();
+                    }
                     return allocHandle.continueReading();
                 } else {
                     if (inboundBuffer == null) {
@@ -724,9 +730,6 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
                 allocHandle.lastBytesRead(numBytesToBeConsumed);
             } else {
                 if (msg == CLOSE_MESSAGE) {
-                    allocHandle.readComplete();
-                    pipeline().fireChannelReadComplete();
-                    close();
                     return false;
                 }
                 if (msg instanceof Http2WindowUpdateFrame) {
@@ -754,7 +757,8 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
             ChannelOutboundBuffer buffer = unsafe().outboundBuffer();
             // If the buffer is not writable but should be writable, then write and flush a dummy object
             // to trigger a writability change.
-            if (!buffer.isWritable() && buffer.totalPendingWriteBytes() < config.getWriteBufferHighWaterMark()) {
+            if (buffer != null && !buffer.isWritable()
+                    && buffer.totalPendingWriteBytes() < config.getWriteBufferHighWaterMark()) {
                 buffer.addMessage(REEVALUATE_WRITABILITY_MESSAGE, 1, voidPromise());
                 unsafe().flush();
             }
