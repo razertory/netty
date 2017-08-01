@@ -45,9 +45,9 @@ public final class Http2CodecBuilder {
     public Http2CodecBuilder(boolean server, ChannelHandler childHandler) {
         this.childHandler = checkNotNull(childHandler, "childHandler");
         this.server = server;
-        this.initialSettings = Http2Settings.defaultSettings();
-        this.frameLogger = HTTP2_FRAME_LOGGER;
-        this.headersSensitivityDetector = null;
+        initialSettings = Http2Settings.defaultSettings();
+        frameLogger = HTTP2_FRAME_LOGGER;
+        headersSensitivityDetector = null;
     }
 
     /**
@@ -104,17 +104,11 @@ public final class Http2CodecBuilder {
         return headersSensitivityDetector;
     }
 
-    private Http2FrameWriter frameWriter() {
-        return headersSensitivityDetector() == null ?
-            new DefaultHttp2FrameWriter() :
-            new DefaultHttp2FrameWriter(headersSensitivityDetector());
-    }
-
     /**
      * Builds/creates a new {@link Http2Codec} instance using this builder's current settings.
      */
     public Http2Codec build() {
         return new Http2Codec(server, childHandler,
-            frameWriter(), frameLogger(), initialSettings());
+            headersSensitivityDetector(), frameLogger(), initialSettings());
     }
 }
