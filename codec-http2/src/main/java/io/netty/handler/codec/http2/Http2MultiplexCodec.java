@@ -203,20 +203,20 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
     }
 
     @Override
-    public void handlerAdded0(ChannelHandlerContext ctx) throws Exception {
+    public final void handlerAdded0(ChannelHandlerContext ctx) throws Exception {
         if (ctx.executor() != ctx.channel().eventLoop()) {
             throw new IllegalStateException("EventExecutor must be EventLoop of Channel");
         }
     }
 
     @Override
-    public void handlerRemoved0(ChannelHandlerContext ctx) throws Exception {
+    public final void handlerRemoved0(ChannelHandlerContext ctx) throws Exception {
         super.handlerRemoved0(ctx);
         channelsToFireChildReadComplete.clear();
     }
 
     @Override
-    Http2MultiplexCodecStream newStream() {
+    final Http2MultiplexCodecStream newStream() {
         return new Http2MultiplexCodecStream(connection());
     }
 
@@ -326,10 +326,10 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
     @Override
     public final void channelReadComplete(ChannelHandlerContext ctx) throws Exception {
         onChannelReadComplete(ctx);
-        super.channelReadComplete(ctx);
+        channelReadComplete0(ctx);
     }
 
-    void onChannelReadComplete(ChannelHandlerContext ctx) throws Http2Exception {
+    final void onChannelReadComplete(ChannelHandlerContext ctx)  {
         // If we have many child channel we can optimize for the case when multiple call flush() in
         // channelReadComplete(...) callbacks and only do it once as otherwise we will end-up with multiple
         // write calls on the socket which is expensive.
@@ -352,15 +352,14 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
                 }
             }
         } finally {
-            if (flushNeeded) {
-                flushNeeded = false;
-                flush0(ctx);
-            }
+            // We always flush as this is what Http2ConnectionHandler does for now.
+            // TODO: I think this is not really necessary and we should be able to optimize this in the future.
+            flush0(ctx);
         }
     }
 
     // Allow to override for testing
-    void flush0(ChannelHandlerContext ctx) throws Http2Exception {
+    void flush0(ChannelHandlerContext ctx) {
         flush(ctx);
     }
 
@@ -370,7 +369,7 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
     }
 
     // Allow to extend for testing
-    static class Http2MultiplexCodecStream extends DefaultHttp2FrameStream {
+    static final class Http2MultiplexCodecStream extends DefaultHttp2FrameStream {
         public Http2MultiplexCodecStream(Http2Connection connection) {
             super(connection);
         }
