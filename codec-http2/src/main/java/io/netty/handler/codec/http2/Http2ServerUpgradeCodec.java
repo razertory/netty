@@ -71,7 +71,7 @@ public class Http2ServerUpgradeCodec implements HttpServerUpgradeHandler.Upgrade
      *
      * @param http2Codec the HTTP/2 multiplexing handler.
      */
-    public Http2ServerUpgradeCodec(Http2Codec http2Codec) {
+    public Http2ServerUpgradeCodec(Http2MultiplexCodec http2Codec) {
         this(null, http2Codec);
     }
 
@@ -92,8 +92,8 @@ public class Http2ServerUpgradeCodec implements HttpServerUpgradeHandler.Upgrade
      * @param handlerName the name of the HTTP/2 connection handler to be used in the pipeline.
      * @param http2Codec the HTTP/2 multiplexing handler.
      */
-    public Http2ServerUpgradeCodec(String handlerName, Http2Codec http2Codec) {
-        this(handlerName, http2Codec.frameCodec(), http2Codec);
+    public Http2ServerUpgradeCodec(String handlerName, Http2MultiplexCodec http2Codec) {
+        this(handlerName, http2Codec, http2Codec);
     }
 
     /**

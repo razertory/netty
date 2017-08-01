@@ -24,12 +24,12 @@ import static io.netty.util.internal.ObjectUtil.checkNotNull;
  * Builder for the {@link Http2FrameCodec}.
  */
 @UnstableApi
-public final class Http2FrameCodecBuilder extends
+public class Http2FrameCodecBuilder extends
         AbstractHttp2ConnectionHandlerBuilder<Http2FrameCodec, Http2FrameCodecBuilder> {
 
     private Http2FrameWriter frameWriter;
 
-    private Http2FrameCodecBuilder(boolean server) {
+    Http2FrameCodecBuilder(boolean server) {
         server(server);
     }
 

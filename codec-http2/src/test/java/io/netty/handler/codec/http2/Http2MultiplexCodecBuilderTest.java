@@ -46,9 +46,9 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 /**
- * Unit tests for {@link Http2Codec}.
+ * Unit tests for {@link Http2MultiplexCodec}.
  */
-public class Http2CodecTest {
+public class Http2MultiplexCodecBuilderTest {
 
     private static EventLoopGroup group;
     private Channel serverChannel;
@@ -73,7 +73,7 @@ public class Http2CodecTest {
                     @Override
                     protected void initChannel(Channel ch) throws Exception {
                         serverConnectedChannel = ch;
-                        ch.pipeline().addLast(new Http2CodecBuilder(true, serverLastInboundHandler).build());
+                        ch.pipeline().addLast(new Http2MultiplexCodecBuilder(true, serverLastInboundHandler).build());
                         serverChannelLatch.countDown();
                     }
                 });
@@ -82,7 +82,7 @@ public class Http2CodecTest {
         Bootstrap cb = new Bootstrap()
                 .channel(LocalChannel.class)
                 .group(group)
-                .handler(new Http2CodecBuilder(false, new TestChannelInitializer()).build());
+                .handler(new Http2MultiplexCodecBuilder(false, new TestChannelInitializer()).build());
         clientChannel = cb.connect(serverAddress).sync().channel();
         assertTrue(serverChannelLatch.await(5, SECONDS));
     }
