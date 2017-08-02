@@ -20,10 +20,12 @@ import io.netty.buffer.Unpooled;
 import io.netty.buffer.UnpooledByteBufAllocator;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
+import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandler;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.channel.ChannelPromise;
+import io.netty.channel.DefaultChannelPromise;
 import io.netty.channel.embedded.EmbeddedChannel;
 import io.netty.handler.codec.http.HttpMethod;
 import io.netty.handler.codec.http.HttpScheme;
@@ -35,6 +37,7 @@ import java.net.InetSocketAddress;
 
 import org.junit.After;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import static io.netty.util.ReferenceCountUtil.release;
@@ -436,23 +439,23 @@ public class Http2MultiplexCodecTest {
         ByteBuf data = Unpooled.buffer(initialRemoteStreamWindow - 1).writeZero(initialRemoteStreamWindow - 1);
         childChannel.writeAndFlush(new DefaultHttp2DataFrame(data));
         verifyFlowControlWindowAndWritability(childChannel, 1);
-        assertEquals("true,false,true", inboundHandler.writabilityStates());
+        assertEquals("true", inboundHandler.writabilityStates());
 
         ByteBuf data1 = Unpooled.buffer(100).writeZero(100);
         childChannel.writeAndFlush(new DefaultHttp2DataFrame(data1));
         verifyFlowControlWindowAndWritability(childChannel, -99);
-        assertEquals("true,false,true,false", inboundHandler.writabilityStates());
+        assertEquals("true,false", inboundHandler.writabilityStates());
 
         codec.onHttp2Frame(new DefaultHttp2WindowUpdateFrame(99).stream(inboundStream));
         codec.onChannelReadComplete();
         // the flow control window should be updated, but the channel should still not be writable.
         verifyFlowControlWindowAndWritability(childChannel, 0);
-        assertEquals("true,false,true,false", inboundHandler.writabilityStates());
+        assertEquals("true,false", inboundHandler.writabilityStates());
 
         codec.onHttp2Frame(new DefaultHttp2WindowUpdateFrame(1).stream(inboundStream));
         codec.onChannelReadComplete();
         verifyFlowControlWindowAndWritability(childChannel, 1);
-        assertEquals("true,false,true,false,true", inboundHandler.writabilityStates());
+        assertEquals("true,false,true", inboundHandler.writabilityStates());
     }
 
     @Test
@@ -479,14 +482,15 @@ public class Http2MultiplexCodecTest {
         assertEquals("true", inboundHandler.writabilityStates());
 
         childChannel.write(frameToCancel);
-        assertEquals("true,false", inboundHandler.writabilityStates());
-        assertFalse(childChannel.isWritable());
+        assertEquals("true,false,true", inboundHandler.writabilityStates());
+        assertTrue(childChannel.isWritable());
         childChannel.flush();
 
         assertTrue(childChannel.isWritable());
         assertEquals("true,false,true", inboundHandler.writabilityStates());
     }
 
+    @Ignore("not supported anymore atm")
     @Test
     public void cancellingWritesBeforeFlush() {
         LastInboundHandler inboundHandler = streamActiveAndWriteHeaders(inboundStream);

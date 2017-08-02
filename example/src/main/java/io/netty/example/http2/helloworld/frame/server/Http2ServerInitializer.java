@@ -31,6 +31,7 @@ import io.netty.handler.codec.http.HttpServerUpgradeHandler.UpgradeCodec;
 import io.netty.handler.codec.http.HttpServerUpgradeHandler.UpgradeCodecFactory;
 import io.netty.handler.codec.http2.Http2CodecUtil;
 import io.netty.handler.codec.http2.Http2FrameCodec;
+import io.netty.handler.codec.http2.Http2FrameCodecBuilder;
 import io.netty.handler.codec.http2.Http2ServerUpgradeCodec;
 import io.netty.handler.ssl.SslContext;
 import io.netty.util.AsciiString;
@@ -89,9 +90,13 @@ public class Http2ServerInitializer extends ChannelInitializer<SocketChannel> {
      */
     private void configureClearText(SocketChannel ch) {
         final ChannelPipeline p = ch.pipeline();
+
+        p.addLast(Http2FrameCodecBuilder.forServer().build());
+        p.addLast(new HelloWorldHttp2Handler());
+
+        /*
         final HttpServerCodec sourceCodec = new HttpServerCodec();
 
-        p.addLast(sourceCodec);
         p.addLast(new HttpServerUpgradeHandler(sourceCodec, upgradeCodecFactory));
         p.addLast(new SimpleChannelInboundHandler<HttpMessage>() {
             @Override
@@ -107,6 +112,7 @@ public class Http2ServerInitializer extends ChannelInitializer<SocketChannel> {
         });
 
         p.addLast(new UserEventLogger());
+        */
     }
 
     /**

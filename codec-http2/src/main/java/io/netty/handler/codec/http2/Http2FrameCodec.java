@@ -166,7 +166,7 @@ public class Http2FrameCodec extends Http2ConnectionHandler  {
     // Used to adjust flow control window on channel active. Set to null afterwards.
     private Integer initialLocalConnectionWindow;
 
-    ChannelHandlerContext ctx;
+    private ChannelHandlerContext ctx;
 
     /** Number of buffered streams if the {@link StreamBufferingEncoder} is used. **/
     private int numBufferedStreams;

@@ -31,6 +31,7 @@ import io.netty.handler.codec.http.HttpServerUpgradeHandler.UpgradeCodec;
 import io.netty.handler.codec.http.HttpServerUpgradeHandler.UpgradeCodecFactory;
 import io.netty.handler.codec.http2.Http2MultiplexCodecBuilder;
 import io.netty.handler.codec.http2.Http2CodecUtil;
+import io.netty.handler.codec.http2.Http2Connection;
 import io.netty.handler.codec.http2.Http2ServerUpgradeCodec;
 import io.netty.handler.ssl.SslContext;
 import io.netty.util.AsciiString;
@@ -70,7 +71,7 @@ public class Http2ServerInitializer extends ChannelInitializer<SocketChannel> {
     }
 
     @Override
-    public void initChannel(SocketChannel ch) {
+    public void initChannel(SocketChannel ch) throws Exception {
         if (sslCtx != null) {
             configureSsl(ch);
         } else {
@@ -88,8 +89,11 @@ public class Http2ServerInitializer extends ChannelInitializer<SocketChannel> {
     /**
      * Configure the pipeline for a cleartext upgrade from HTTP to HTTP/2.0
      */
-    private void configureClearText(SocketChannel ch) {
+    private void configureClearText(SocketChannel ch) throws Exception {
         final ChannelPipeline p = ch.pipeline();
+        p.addLast(new Http2MultiplexCodecBuilder(true, new HelloWorldHttp2Handler()).build());
+
+        /*
         final HttpServerCodec sourceCodec = new HttpServerCodec();
 
         p.addLast(sourceCodec);
@@ -108,6 +112,7 @@ public class Http2ServerInitializer extends ChannelInitializer<SocketChannel> {
         });
 
         p.addLast(new UserEventLogger());
+        */
     }
 
     /**

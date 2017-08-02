@@ -45,7 +45,7 @@ public final class Http2Server {
 
     static final boolean SSL = System.getProperty("ssl") != null;
 
-    static final int PORT = Integer.parseInt(System.getProperty("port", SSL? "8443" : "8080"));
+    static final int PORT = Integer.parseInt(System.getProperty("port", SSL? "8443" : "8888"));
 
     public static void main(String[] args) throws Exception {
         // Configure SSL.
@@ -77,7 +77,7 @@ public final class Http2Server {
             b.option(ChannelOption.SO_BACKLOG, 1024);
             b.group(group)
              .channel(NioServerSocketChannel.class)
-             .handler(new LoggingHandler(LogLevel.INFO))
+             //.handler(new LoggingHandler(LogLevel.INFO))
              .childHandler(new Http2ServerInitializer(sslCtx));
 
             Channel ch = b.bind(PORT).sync().channel();
