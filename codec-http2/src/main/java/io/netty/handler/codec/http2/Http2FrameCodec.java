@@ -79,23 +79,6 @@ import static io.netty.handler.codec.http2.Http2CodecUtil.isStreamIdValid;
  * The first frame of a HTTP/2 stream must be a {@link Http2HeadersFrame}, which will have a {@link Http2FrameStream}
  * object attached.
  *
- * <pre>
- *      public class MyChannelHandler extends Http2ChannelDuplexHandler {
- *          private static final AttributeKey&lt;ApplicationState&gt; KEY = AttributeKey.valueOf("mystate");
- *
- *          @Override
- *          public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
- *              if (msg instanceof Http2HeadersFrame) {
- *                  Http2HeadersFrame headersFrame = (Http2HeadersFrame) msg;
- *                  if (!msg.stream().hasAttr(KEY)) {
- *                      // A new inbound stream.
- *                      msg.stream().attr(KEY).set(new ApplicationState());
- *                  }
- *              }
- *          }
- *      }
- * </pre>
- *
  * <h3>New outbound Streams</h3>
  *
  * A outbound HTTP/2 stream can be created by first instantiating a new {@link Http2FrameStream} object via
@@ -130,9 +113,10 @@ import static io.netty.handler.codec.http2.Http2CodecUtil.isStreamIdValid;
  *
  * <p>The HTTP/2 standard allows for an endpoint to limit the maximum number of concurrently active streams via the
  * {@code SETTINGS_MAX_CONCURRENT_STREAMS} setting. When this limit is reached, no new streams can be created. However,
- * the {@link Http2FrameCodec} can be build with {@link Http2FrameCodecBuilder#bufferOutboundStreams} enabled, in which
- * case a new stream and its associated frames will be buffered until either the limit is increased or an active
- * stream is closed. It's, however, possible that a buffered stream will never become active. That is, the channel might
+ * the {@link Http2FrameCodec} can be build with
+ * {@link Http2FrameCodecBuilder#encoderEnforceMaxConcurrentStreams(boolean)} enabled, in which case a new stream and
+ * its associated frames will be buffered until either the limit is increased or an active stream is closed. It's,
+ * however, possible that a buffered stream will never become active. That is, the channel might
  * get closed or a GO_AWAY frame might be received. In the first case, all writes of buffered streams will fail with a
  * {@link Http2ChannelClosedException}. In the second case, all writes of buffered streams with an identifier less than
  * the last stream identifier of the GO_AWAY frame will fail with a {@link Http2GoAwayException}.
@@ -166,7 +150,7 @@ public class Http2FrameCodec extends Http2ConnectionHandler  {
     // Used to adjust flow control window on channel active. Set to null afterwards.
     private Integer initialLocalConnectionWindow;
 
-    ChannelHandlerContext ctx;
+    private ChannelHandlerContext ctx;
 
     /** Number of buffered streams if the {@link StreamBufferingEncoder} is used. **/
     private int numBufferedStreams;
@@ -361,8 +345,7 @@ public class Http2FrameCodec extends Http2ConnectionHandler  {
 
     final void consumeBytes(int streamId, int bytes) throws Http2Exception {
         Http2Stream stream = connection().stream(streamId);
-        connection().local().flowController()
-                    .consumeBytes(stream, bytes);
+        connection().local().flowController().consumeBytes(stream, bytes);
     }
 
     private void writeSettingsFrame(ChannelHandlerContext ctx, Http2SettingsFrame frame, ChannelPromise promise) {
@@ -582,7 +565,7 @@ public class Http2FrameCodec extends Http2ConnectionHandler  {
     /**
      * {@link Http2FrameStream} implementation.
      */
-    // TODO(buchgr): Merge Http2Stream2 and Http2Stream.
+    // TODO(buchgr): Merge Http2FrameStream and Http2Stream.
     static class DefaultHttp2FrameStream implements Http2FrameStream {
 
         private final Http2Connection connection;
@@ -593,9 +576,7 @@ public class Http2FrameCodec extends Http2ConnectionHandler  {
         }
 
         DefaultHttp2FrameStream id(int id) {
-            if (!isStreamIdValid(id)) {
-                throw new IllegalArgumentException("Stream identifier invalid. Was: " + id);
-            }
+            assert isStreamIdValid(id);
             this.id = id;
             return this;
         }

@@ -16,7 +16,7 @@
 package io.netty.handler.codec.http2;
 
 import io.netty.buffer.ByteBuf;
-import io.netty.channel.AbstractChannel;
+import io.netty.buffer.ByteBufAllocator;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelConfig;
 import io.netty.channel.ChannelFuture;
@@ -24,15 +24,21 @@ import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandler;
 import io.netty.channel.ChannelHandlerAdapter;
 import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.ChannelId;
 import io.netty.channel.ChannelMetadata;
 import io.netty.channel.ChannelOutboundBuffer;
+import io.netty.channel.ChannelPipeline;
+import io.netty.channel.ChannelProgressivePromise;
 import io.netty.channel.ChannelPromise;
 import io.netty.channel.DefaultChannelConfig;
+import io.netty.channel.DefaultChannelPipeline;
 import io.netty.channel.DefaultMaxMessagesRecvByteBufAllocator;
 import io.netty.channel.EventLoop;
 import io.netty.channel.MessageSizeEstimator;
 import io.netty.channel.RecvByteBufAllocator;
+import io.netty.channel.VoidChannelPromise;
 import io.netty.channel.WriteBufferWaterMark;
+import io.netty.util.DefaultAttributeMap;
 import io.netty.util.ReferenceCountUtil;
 import io.netty.util.ReferenceCounted;
 import io.netty.util.internal.ThrowableUtil;
@@ -110,20 +116,9 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
     private static final AtomicLongFieldUpdater<DefaultHttp2StreamChannel> OUTBOUND_FLOW_CONTROL_WINDOW_UPDATER =
             AtomicLongFieldUpdater.newUpdater(DefaultHttp2StreamChannel.class, "outboundFlowControlWindow");
 
-    /**
-     * Used by subclasses to queue a close channel within the read queue. When read, it will close
-     * the channel (using Unsafe) instead of notifying handlers of the message with {@code
-     * channelRead()}. Additional inbound messages must not arrive after this one.
-     */
-    private static final Object CLOSE_MESSAGE = new Object();
-    /**
-     * Used to add a message to the {@link ChannelOutboundBuffer}, so as to have it re-evaluate its writability
-     * state.
-     */
-    private static final Object REEVALUATE_WRITABILITY_MESSAGE = new Object();
     private static final ChannelMetadata METADATA = new ChannelMetadata(false, 16);
     private static final ClosedChannelException CLOSED_CHANNEL_EXCEPTION = ThrowableUtil.unknownStackTrace(
-            new ClosedChannelException(), DefaultHttp2StreamChannel.class, "doWrite(...)");
+            new ClosedChannelException(), DefaultHttp2StreamChannel.Http2ChannelUnsafe.class, "write(...)");
     /**
      * Number of bytes to consider non-payload messages, to determine when to stop reading. 9 is
      * arbitrary, but also the minimum size of an HTTP/2 frame. Primarily is non-zero.
@@ -169,10 +164,14 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
 
     private int initialOutboundStreamWindow = Http2CodecUtil.DEFAULT_WINDOW_SIZE;
     private boolean flushNeeded;
+    private long idCount;
 
     // Linked-List for DefaultHttp2StreamChannel instances that need to be processed by channelReadComplete(...)
     private DefaultHttp2StreamChannel head;
     private DefaultHttp2StreamChannel tail;
+
+    // volatile as it is accessed from the DefaultHttp2StreamChannel in a multi-threaded way.
+    volatile ChannelHandlerContext ctx;
 
     /**
      * Construct a new handler whose child channels run in a different event loop.
@@ -190,7 +189,7 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
         this.inboundStreamHandler = inboundStreamHandler;
     }
 
-    private static ChannelHandler checkSharable(ChannelHandler handler) {
+    static ChannelHandler checkSharable(ChannelHandler handler) {
         if ((handler instanceof ChannelHandlerAdapter && !((ChannelHandlerAdapter) handler).isSharable()) ||
                 !handler.getClass().isAnnotationPresent(Sharable.class)) {
             throw new IllegalArgumentException("The handler must be Sharable");
@@ -203,7 +202,7 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
         // failures can happen after this point, they will be handled by the channel by closing the
         // childChannel.
         DefaultHttp2StreamChannel childChannel = (DefaultHttp2StreamChannel) future.channel();
-        if (future.cause() != null) {
+        if (!future.isSuccess()) {
             if (childChannel.isRegistered()) {
                 childChannel.close();
             } else {
@@ -219,6 +218,7 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
         if (ctx.executor() != ctx.channel().eventLoop()) {
             throw new IllegalStateException("EventExecutor must be EventLoop of Channel");
         }
+        this.ctx = ctx;
     }
 
     @Override
@@ -265,9 +265,6 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
     @Override
     final void onHttp2StreamActive(ChannelHandlerContext ctx, Http2FrameStream stream) {
         DefaultHttp2StreamChannel childChannel = new DefaultHttp2StreamChannel(stream);
-
-        childChannel.pipeline().addLast(inboundStreamHandler);
-
         ChannelFuture future = ctx.channel().eventLoop().register(childChannel);
         if (future.isDone()) {
             registerDone(future);
@@ -293,7 +290,7 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
         try {
             childChannel.pipeline().fireExceptionCaught(cause.getCause());
         } finally {
-            childChannel.close();
+            childChannel.unsafe().closeForcibly();
         }
     }
 
@@ -340,6 +337,12 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
             // We need to ensure we release the goAwayFrame.
             goAwayFrame.release();
         }
+    }
+
+    @Override
+    public void channelWritabilityChanged(ChannelHandlerContext ctx) throws Exception {
+        // TODO: Should we also notify all the Http2StreamChannel about this and so trigger a writability change ?
+        super.channelWritabilityChanged(ctx);
     }
 
     /**
@@ -395,13 +398,18 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
         DefaultHttp2StreamChannel channel;
     }
 
-    private final class DefaultHttp2StreamChannel extends AbstractChannel implements Http2StreamChannel {
-
+    // TODO: Handle writability changes due writing from outside the eventloop.
+    private final class DefaultHttp2StreamChannel extends DefaultAttributeMap implements Http2StreamChannel {
         private final Http2StreamChannelConfig config = new Http2StreamChannelConfig(this);
+        private final Http2ChannelUnsafe unsafe = new Http2ChannelUnsafe();
+        private final ChannelId channelId;
+        private final ChannelPipeline pipeline;
         private final Http2FrameStream stream;
+        private final ChannelPromise closePromise;
 
-        // Needs to be volatile as it will be read from multiple threads.
-        private volatile boolean closed;
+        private volatile boolean registered;
+
+        private boolean closePending;
         private boolean readInProgress;
         private Queue<Object> inboundBuffer;
 
@@ -411,11 +419,11 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
         /** {@code true} if a close without an error was initiated **/
         private boolean streamClosedWithoutError;
 
-        boolean fireChannelReadPending;
-
         // Keeps track of flush calls in channelReadComplete(...) and aggregate these.
         private boolean inFireChannelReadComplete;
         private boolean flushPending;
+
+        boolean fireChannelReadPending;
 
         /**
          * The flow control window of the remote side i.e. the number of bytes this channel is allowed to send to the
@@ -430,9 +438,21 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
         DefaultHttp2StreamChannel next;
 
         DefaultHttp2StreamChannel(Http2FrameStream stream) {
-            super(ctx.channel());
             this.stream = stream;
             ((Http2MultiplexCodecStream) stream).channel = this;
+            pipeline = new DefaultChannelPipeline(this) {
+                @Override
+                protected void incrementPendingOutboundBytes(long size) {
+                    unsafe.incrementOutboundFlowControlWindow(size, true);
+                }
+
+                @Override
+                protected void decrementPendingOutboundBytes(long size) {
+                    unsafe.incrementOutboundFlowControlWindow(-size, true);
+                }
+            };
+            closePromise = pipeline.newPromise();
+            channelId = new Http2StreamChannelId(parent().id(), ++idCount);
         }
 
         @Override
@@ -443,10 +463,10 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
         void streamClosed() {
             streamClosedWithoutError = true;
             if (readInProgress) {
-                unsafe().recvBufAllocHandle().readComplete();
-                close();
+                // Just call closeForcibly() as this will take care of fireChannelInactive().
+                unsafe().closeForcibly();
             } else {
-                inboundBuffer().add(CLOSE_MESSAGE);
+                closePending = true;
             }
             ((Http2MultiplexCodecStream) stream).channel = null;
         }
@@ -463,7 +483,7 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
 
         @Override
         public boolean isOpen() {
-            return !closed;
+            return !closePromise.isDone();
         }
 
         @Override
@@ -473,225 +493,224 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
 
         @Override
         public boolean isWritable() {
-            if (isStreamIdValid(stream.id())
+            // TODO: Should we also take the parent channel into account ?
+            return isStreamIdValid(stream.id())
                     // So that the channel doesn't become active before the initial flow control window has been set.
-                    && outboundFlowControlWindow > 0) {
-                // Could be null if channel closed.
-                ChannelOutboundBuffer buffer = unsafe().outboundBuffer();
-                return buffer != null && buffer.isWritable();
-            }
-            return false;
+                    && outboundFlowControlWindow > 0;
         }
 
         @Override
-        protected AbstractUnsafe newUnsafe() {
-            return new Http2ChannelUnsafe();
+        public ChannelId id() {
+            return channelId;
         }
 
         @Override
-        protected boolean isCompatible(EventLoop loop) {
-            return loop == parent().eventLoop();
+        public EventLoop eventLoop() {
+            return parent().eventLoop();
         }
 
         @Override
-        protected SocketAddress localAddress0() {
+        public Channel parent() {
+            return ctx.channel();
+        }
+
+        @Override
+        public boolean isRegistered() {
+            return registered;
+        }
+
+        @Override
+        public SocketAddress localAddress() {
             return parent().localAddress();
         }
 
         @Override
-        protected SocketAddress remoteAddress0() {
+        public SocketAddress remoteAddress() {
             return parent().remoteAddress();
         }
 
         @Override
-        protected void doBind(SocketAddress localAddress) throws Exception {
-            throw new UnsupportedOperationException();
+        public ChannelFuture closeFuture() {
+            return closePromise;
         }
 
         @Override
-        protected void doDisconnect() throws Exception {
-            doClose();
+        public long bytesBeforeUnwritable() {
+            return max(0, outboundFlowControlWindow);
         }
 
         @Override
-        protected void doClose() throws Exception {
-            closed = true;
-            fireChannelReadPending = false;
-
-            // Only ever send a reset frame if the connection is still alove as otherwise it makes no sense at all
-            // anyway.
-            if (ctx.channel().isActive() && !streamClosedWithoutError && isStreamIdValid(stream().id())) {
-                Http2StreamFrame resetFrame = new DefaultHttp2ResetFrame(Http2Error.CANCEL).stream(stream());
-                write0(resetFrame);
-                flush0();
-            }
-
-            if (inboundBuffer == null) {
-                return;
-            }
-            for (;;) {
-                Object msg = inboundBuffer.poll();
-                if (msg == null) {
-                    break;
-                }
-                ReferenceCountUtil.release(msg);
-            }
+        public long bytesBeforeWritable() {
+            long window = outboundFlowControlWindow;
+            return window < 0 ? -window : 0;
         }
 
         @Override
-        protected void doBeginRead() {
-            if (readInProgress) {
-                return;
+        public Unsafe unsafe() {
+            return unsafe;
+        }
+
+        @Override
+        public ChannelPipeline pipeline() {
+            return pipeline;
+        }
+
+        @Override
+        public ByteBufAllocator alloc() {
+            return config().getAllocator();
+        }
+
+        @Override
+        public Channel read() {
+            pipeline().read();
+            return this;
+        }
+
+        @Override
+        public Channel flush() {
+            pipeline().flush();
+            return this;
+        }
+
+        @Override
+        public ChannelFuture bind(SocketAddress localAddress) {
+            return pipeline().bind(localAddress);
+        }
+
+        @Override
+        public ChannelFuture connect(SocketAddress remoteAddress) {
+            return pipeline().connect(remoteAddress);
+        }
+
+        @Override
+        public ChannelFuture connect(SocketAddress remoteAddress, SocketAddress localAddress) {
+            return pipeline().connect(remoteAddress, localAddress);
+        }
+
+        @Override
+        public ChannelFuture disconnect() {
+            return pipeline().disconnect();
+        }
+
+        @Override
+        public ChannelFuture close() {
+            return pipeline().close();
+        }
+
+        @Override
+        public ChannelFuture deregister() {
+            return pipeline().deregister();
+        }
+
+        @Override
+        public ChannelFuture bind(SocketAddress localAddress, ChannelPromise promise) {
+            return pipeline().bind(localAddress, promise);
+        }
+
+        @Override
+        public ChannelFuture connect(SocketAddress remoteAddress, ChannelPromise promise) {
+            return pipeline().connect(remoteAddress, promise);
+        }
+
+        @Override
+        public ChannelFuture connect(SocketAddress remoteAddress, SocketAddress localAddress, ChannelPromise promise) {
+            return pipeline().connect(remoteAddress, localAddress, promise);
+        }
+
+        @Override
+        public ChannelFuture disconnect(ChannelPromise promise) {
+            return pipeline().disconnect(promise);
+        }
+
+        @Override
+        public ChannelFuture close(ChannelPromise promise) {
+            return pipeline().close(promise);
+        }
+
+        @Override
+        public ChannelFuture deregister(ChannelPromise promise) {
+            return pipeline().deregister(promise);
+        }
+
+        @Override
+        public ChannelFuture write(Object msg) {
+            return pipeline().write(msg);
+        }
+
+        @Override
+        public ChannelFuture write(Object msg, ChannelPromise promise) {
+            return pipeline().write(msg, promise);
+        }
+
+        @Override
+        public ChannelFuture writeAndFlush(Object msg, ChannelPromise promise) {
+            return pipeline().writeAndFlush(msg, promise);
+        }
+
+        @Override
+        public ChannelFuture writeAndFlush(Object msg) {
+            return pipeline().writeAndFlush(msg);
+        }
+
+        @Override
+        public ChannelPromise newPromise() {
+            return pipeline().newPromise();
+        }
+
+        @Override
+        public ChannelProgressivePromise newProgressivePromise() {
+            return pipeline().newProgressivePromise();
+        }
+
+        @Override
+        public ChannelFuture newSucceededFuture() {
+            return pipeline().newSucceededFuture();
+        }
+
+        @Override
+        public ChannelFuture newFailedFuture(Throwable cause) {
+            return pipeline().newFailedFuture(cause);
+        }
+
+        @Override
+        public ChannelPromise voidPromise() {
+            return pipeline().voidPromise();
+        }
+
+        /**
+         * Returns the ID of this channel.
+         */
+        @Override
+        public int hashCode() {
+            return id().hashCode();
+        }
+
+        /**
+         * Returns {@code true} if and only if the specified object is identical
+         * with this channel (i.e: {@code this == o}).
+         */
+        @Override
+        public boolean equals(Object o) {
+            return this == o;
+        }
+
+        @Override
+        public int compareTo(Channel o) {
+            if (this == o) {
+                return 0;
             }
 
-            final RecvByteBufAllocator.Handle allocHandle = unsafe().recvBufAllocHandle();
-            allocHandle.reset(config());
-            if (inboundBuffer == null || inboundBuffer.isEmpty()) {
-                readInProgress = true;
-                return;
-            }
+            return id().compareTo(o.id());
+        }
 
-            boolean read = false;
-
-            do {
-                Object m = inboundBuffer.poll();
-                if (m == null) {
-                    break;
-                }
-                if (m == CLOSE_MESSAGE) {
-                    if (read) {
-                        pipeline().fireChannelReadComplete();
-                    }
-                    allocHandle.readComplete();
-                    close();
-                    return;
-                }
-                doRead0((Http2Frame) m, allocHandle);
-                read = true;
-            } while (allocHandle.continueReading());
-
-            allocHandle.readComplete();
-            pipeline().fireChannelReadComplete();
+        @Override
+        public String toString() {
+            return parent().toString() + "(HTTP/2 - " + stream + ')';
         }
 
         void setWritable() {
-            assert !isWritable();
-            incrementOutboundFlowControlWindow(initialOutboundStreamWindow);
-            pipeline().fireChannelWritabilityChanged();
-        }
-
-        @Override
-        protected void doWrite(ChannelOutboundBuffer in) throws Exception {
-            if (closed) {
-                throw CLOSED_CHANNEL_EXCEPTION;
-            }
-
-            try {
-                for (;;) {
-                    final Object msg = in.current();
-                    if (msg == null) {
-                        break;
-                    }
-                    if (msg == REEVALUATE_WRITABILITY_MESSAGE) {
-                        in.remove();
-                        continue;
-                    }
-
-                    final int bytes = FlowControlledFrameSizeEstimator.HANDLE_INSTANCE.size(msg);
-
-                    /*
-                     * The flow control window needs to be decrement before stealing the message from the buffer (and
-                     * thereby decrementing the number of pending bytes). Else, when calling steal() the number of
-                     * pending bytes could  be less than the writebuffer watermark (=flow control window) and thus
-                     * trigger a  writability change.
-                     *
-                     * This code must never trigger a writability change. Only reading window updates or channel writes
-                      * may change the channel's writability.
-                     */
-                    incrementOutboundFlowControlWindow(-bytes);
-
-                    final ChannelPromise promise = in.steal();
-
-                    if (promise.isCancelled()) {
-                        // Write was cancelled so skip it.
-                        continue;
-                    }
-
-                    // TODO(buchgr): Should we also the change the writability if END_STREAM is set?
-                    try {
-                        if (msg instanceof Http2StreamFrame) {
-                            Http2StreamFrame frame = validateStreamFrame((Http2StreamFrame) msg);
-                            frame.stream(stream());
-
-                            if (!firstFrameWritten && !isStreamIdValid(stream().id())) {
-                                if (!(frame instanceof Http2HeadersFrame)) {
-                                    throw new IllegalArgumentException("The first frame must be a headers frame. Was: "
-                                            + frame.name());
-                                }
-                                firstFrameWritten = true;
-                                write0(frame).addListener(new ChannelFutureListener() {
-                                    @Override
-                                    public void operationComplete(ChannelFuture future) throws Exception {
-                                        if (future.isSuccess()) {
-                                            promise.setSuccess();
-                                            setWritable();
-                                        } else {
-                                            promise.setFailure(future.cause());
-                                            close();
-                                        }
-                                    }
-                                });
-                                return;
-                            }
-                        } else if (!(msg instanceof Http2GoAwayFrame)) {
-                            String msgStr = msg.toString();
-                            ReferenceCountUtil.release(msg);
-                            throw new IllegalArgumentException(
-                                    "Message must be an Http2GoAwayFrame or Http2StreamFrame: " + msgStr);
-                        }
-                        write0(msg).addListener(new ChannelFutureListener() {
-                            @Override
-                            public void operationComplete(ChannelFuture future) throws Exception {
-                                if (future.isSuccess()) {
-                                    promise.setSuccess();
-                                } else {
-                                    promise.setFailure(future.cause());
-                                    if (bytes > 0 && isActive()) {
-                                        /*
-                                         * Return the flow control window of the failed data frame.
-                                         */
-                                        incrementOutboundFlowControlWindow(bytes);
-                                        reevaluateWritability();
-                                    }
-                                }
-                            }
-                        });
-                    } catch (Throwable t) {
-                        promise.tryFailure(t);
-                    }
-                }
-            } finally {
-                // ensure we always flush even if the write loop throws.
-                flush0();
-            }
-        }
-
-        private void flush0()  {
-            // If we are current channelReadComplete(...) call we should just mark this Channel with a flush pending.
-            // We will ensure we trigger ctx.flush() after we processed all Channels later on and so aggregate the
-            // flushes. This is done as ctx.flush() is expensive when as it may trigger an write(...) or writev(...)
-            // operation on the socket.
-            if (inFireChannelReadComplete) {
-                flushPending = true;
-            } else {
-                Http2MultiplexCodec.this.flush0(ctx);
-            }
-        }
-
-        private ChannelFuture write0(Object msg) {
-            ChannelPromise promise = ctx.newPromise();
-            Http2MultiplexCodec.this.write(ctx, msg, promise);
-            return promise;
+            assert eventLoop().inEventLoop();
+            unsafe.setWritable();
         }
 
         private Queue<Object> inboundBuffer() {
@@ -707,7 +726,7 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
          */
         boolean fireChildRead(Http2Frame frame) {
             assert eventLoop().inEventLoop();
-            if (closed) {
+            if (!isActive()) {
                 ReferenceCountUtil.release(frame);
             } else {
                 if (readInProgress) {
@@ -715,7 +734,7 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
                     // Check for null because inboundBuffer doesn't support null; we want to be consistent
                     // for what values are supported.
                     RecvByteBufAllocator.Handle allocHandle = unsafe().recvBufAllocHandle();
-                    doRead0(frame, allocHandle);
+                    unsafe.doRead0(frame, allocHandle);
                     return allocHandle.continueReading();
                 } else {
                     inboundBuffer().add(frame);
@@ -741,79 +760,352 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
             }
         }
 
-        void incrementOutboundFlowControlWindow(int bytes) {
-            if (bytes == 0) {
-                return;
-            }
-            OUTBOUND_FLOW_CONTROL_WINDOW_UPDATER.addAndGet(this, bytes);
-        }
+        private final class Http2ChannelUnsafe implements Unsafe {
+            private final VoidChannelPromise unsafeVoidPromise =
+                    new VoidChannelPromise(DefaultHttp2StreamChannel.this, false);
+            @SuppressWarnings("deprecation")
+            private RecvByteBufAllocator.Handle recvHandle;
+            private boolean flush;
+            private boolean writable;
+            private boolean inClose;
 
-        /**
-         * Returns whether reads should continue. The only reason reads shouldn't continue is that the
-         * channel was just closed.
-         */
-        private void doRead0(Http2Frame frame, RecvByteBufAllocator.Handle allocHandle) {
-            int numBytesToBeConsumed = 0;
-            if (frame instanceof Http2DataFrame) {
-                numBytesToBeConsumed = ((Http2DataFrame) frame).flowControlledBytes();
-                allocHandle.lastBytesRead(numBytesToBeConsumed);
-            } else {
-                if (frame instanceof Http2WindowUpdateFrame) {
-                    Http2WindowUpdateFrame windowUpdate = (Http2WindowUpdateFrame) frame;
-                    incrementOutboundFlowControlWindow(windowUpdate.windowSizeIncrement());
-                    reevaluateWritability();
+            void setWritable() {
+                assert !isWritable();
+                incrementOutboundFlowControlWindow(initialOutboundStreamWindow, false);
+                writable = true;
+                assert isWritable();
+                pipeline().fireChannelWritabilityChanged();
+            }
+
+            void incrementOutboundFlowControlWindow(long bytes, boolean mayChangeWritability) {
+                if (bytes == 0) {
+                    return;
                 }
-                allocHandle.lastBytesRead(ARBITRARY_MESSAGE_SIZE);
-            }
-            allocHandle.incMessagesRead(1);
-            pipeline().fireChannelRead(frame);
-
-            if (numBytesToBeConsumed != 0) {
-                try {
-                    bytesConsumed(numBytesToBeConsumed);
-                } catch (Http2Exception e) {
-                    pipeline().fireExceptionCaught(e);
+                long window = OUTBOUND_FLOW_CONTROL_WINDOW_UPDATER.addAndGet(DefaultHttp2StreamChannel.this, bytes);
+                if (mayChangeWritability) {
+                    if (!writable) {
+                        if (window > 0) {
+                            writable = true;
+                            pipeline().fireChannelWritabilityChanged();
+                        }
+                    } else if (window <= 0) {
+                        writable = false;
+                        pipeline().fireChannelWritabilityChanged();
+                    }
                 }
             }
-        }
 
-        private void reevaluateWritability() {
-            ChannelOutboundBuffer buffer = unsafe().outboundBuffer();
-            // If the buffer is not writable but should be writable, then write and flush a dummy object
-            // to trigger a writability change.
-            if (buffer != null && !buffer.isWritable()
-                    && buffer.totalPendingWriteBytes() < config.getWriteBufferHighWaterMark()) {
-                buffer.addMessage(REEVALUATE_WRITABILITY_MESSAGE, 1, voidPromise());
-                unsafe().flush();
-            }
-        }
-
-        private void bytesConsumed(final int bytes) throws Http2Exception {
-            onBytesConsumed(ctx, stream, bytes);
-        }
-
-        private Http2StreamFrame validateStreamFrame(Http2StreamFrame frame) {
-            if (frame.stream() != null && frame.stream() != stream) {
-                String msgString = frame.toString();
-                ReferenceCountUtil.release(frame);
-                throw new IllegalArgumentException(
-                        "Stream " + frame.stream() + " must not be set on the frame: " + msgString);
-            }
-            return frame;
-        }
-
-        @Override
-        protected void doRegister() throws Exception {
-            if (isRegistered()) {
-                throw new UnsupportedOperationException("Re-register is not supported");
-            }
-        }
-
-        private final class Http2ChannelUnsafe extends AbstractUnsafe {
             @Override
             public void connect(final SocketAddress remoteAddress,
                                 SocketAddress localAddress, final ChannelPromise promise) {
                 promise.setFailure(new UnsupportedOperationException());
+            }
+
+            @SuppressWarnings("deprecation")
+            @Override
+            public RecvByteBufAllocator.Handle recvBufAllocHandle() {
+                if (recvHandle == null) {
+                    recvHandle = config().getRecvByteBufAllocator().newHandle();
+                }
+                return recvHandle;
+            }
+
+            @Override
+            public SocketAddress localAddress() {
+                return parent().unsafe().localAddress();
+            }
+
+            @Override
+            public SocketAddress remoteAddress() {
+                return parent().unsafe().remoteAddress();
+            }
+
+            @Override
+            public void register(EventLoop eventLoop, ChannelPromise promise) {
+                if (registered) {
+                    throw new UnsupportedOperationException("Re-register is not supported");
+                }
+
+                registered = true;
+
+                // Add the handler to the pipeline now that we are registered.
+                pipeline().addLast(inboundStreamHandler);
+
+                promise.setSuccess();
+
+                pipeline().fireChannelRegistered();
+                if (isActive()) {
+                    pipeline().fireChannelActive();
+                }
+            }
+
+            @Override
+            public void bind(SocketAddress localAddress, ChannelPromise promise) {
+                promise.setFailure(new UnsupportedOperationException());
+            }
+
+            @Override
+            public void disconnect(ChannelPromise promise) {
+                close(promise);
+            }
+
+            @Override
+            public void close(ChannelPromise promise) {
+                if (closePromise.isDone()) {
+                    promise.setFailure(new ClosedChannelException());
+                    return;
+                }
+                if (inClose) {
+                    return;
+                }
+                inClose = true;
+                try {
+                    closePending = false;
+                    fireChannelReadPending = false;
+
+                    // Only ever send a reset frame if the connection is still alive as otherwise it makes no sense at
+                    // all anyway.
+                    if (parent().isActive() && !streamClosedWithoutError && isStreamIdValid(stream().id())) {
+                        Http2StreamFrame resetFrame = new DefaultHttp2ResetFrame(Http2Error.CANCEL).stream(stream());
+                        write(resetFrame, unsafe().voidPromise());
+                        flush();
+                    }
+
+                    if (inboundBuffer != null) {
+                        for (;;) {
+                            Object msg = inboundBuffer.poll();
+                            if (msg == null) {
+                                break;
+                            }
+                            ReferenceCountUtil.release(msg);
+                        }
+                    }
+
+                    pipeline().fireChannelInactive();
+                    if (isRegistered()) {
+                        deregister(unsafe().voidPromise());
+                    }
+                    promise.setSuccess();
+                    closePromise.setSuccess();
+                } finally {
+                    inClose = false;
+                }
+            }
+
+            @Override
+            public void closeForcibly() {
+                close(unsafe().voidPromise());
+            }
+
+            @Override
+            public void deregister(ChannelPromise promise) {
+                if (registered) {
+                    registered = true;
+                    promise.setSuccess();
+                    pipeline().fireChannelUnregistered();
+                } else {
+                    promise.setFailure(new IllegalStateException("Not registered"));
+                }
+            }
+
+            @Override
+            public void beginRead() {
+                if (readInProgress || !isActive()) {
+                    return;
+                }
+
+                final RecvByteBufAllocator.Handle allocHandle = unsafe().recvBufAllocHandle();
+                allocHandle.reset(config());
+                if (inboundBuffer == null) {
+                    if (closePending) {
+                        unsafe.closeForcibly();
+                    } else {
+                        readInProgress = true;
+                    }
+                    return;
+                }
+
+                do {
+                    Object m = inboundBuffer.poll();
+                    if (m == null) {
+                        if (closePending) {
+                            pipeline().fireChannelReadComplete();
+                            unsafe.closeForcibly();
+                            return;
+                        }
+                    }
+                    doRead0((Http2Frame) m, allocHandle);
+                } while (allocHandle.continueReading());
+
+                allocHandle.readComplete();
+                pipeline().fireChannelReadComplete();
+            }
+
+            /**
+             * Returns whether reads should continue. The only reason reads shouldn't continue is that the
+             * channel was just closed.
+             */
+            @SuppressWarnings("deprecation")
+            void doRead0(Http2Frame frame, RecvByteBufAllocator.Handle allocHandle) {
+                int numBytesToBeConsumed = 0;
+                if (frame instanceof Http2HeadersFrame) {
+                    allocHandle.lastBytesRead(ARBITRARY_MESSAGE_SIZE);
+                } else if (frame instanceof Http2DataFrame) {
+                    numBytesToBeConsumed = ((Http2DataFrame) frame).flowControlledBytes();
+                    allocHandle.lastBytesRead(numBytesToBeConsumed);
+                } else {
+                    if (frame instanceof Http2WindowUpdateFrame) {
+                        Http2WindowUpdateFrame windowUpdate = (Http2WindowUpdateFrame) frame;
+                        incrementOutboundFlowControlWindow(windowUpdate.windowSizeIncrement(), true);
+                    }
+                    allocHandle.lastBytesRead(ARBITRARY_MESSAGE_SIZE);
+                }
+                allocHandle.incMessagesRead(1);
+                pipeline().fireChannelRead(frame);
+
+                if (numBytesToBeConsumed != 0) {
+                    try {
+                        onBytesConsumed(ctx, stream, numBytesToBeConsumed);
+                    } catch (Http2Exception e) {
+                        pipeline().fireExceptionCaught(e);
+                    }
+                }
+            }
+
+            @Override
+            public void write(Object msg, final ChannelPromise promise) {
+                if (!isActive()) {
+                    ReferenceCountUtil.release(msg);
+                    promise.setFailure(CLOSED_CHANNEL_EXCEPTION);
+                    return;
+                }
+
+                // After this point its not possible to cancel a write anymore.
+                if (!promise.setUncancellable()) {
+                    ReferenceCountUtil.release(msg);
+                    return;
+                }
+
+                final int bytes = FlowControlledFrameSizeEstimator.HANDLE_INSTANCE.size(msg);
+
+                incrementOutboundFlowControlWindow(-bytes, true);
+
+                // TODO(buchgr): Should we also the change the writability if END_STREAM is set?
+                try {
+                    if (msg instanceof Http2StreamFrame) {
+                        Http2StreamFrame frame = validateStreamFrame((Http2StreamFrame) msg).stream(stream());
+
+                        if (!firstFrameWritten && !isStreamIdValid(stream().id())) {
+                            if (!(frame instanceof Http2HeadersFrame)) {
+                                ReferenceCountUtil.release(frame);
+                                promise.setFailure(
+                                        new IllegalArgumentException("The first frame must be a headers frame. Was: "
+                                        + frame.name()));
+                                return;
+                            }
+                            firstFrameWritten = true;
+                            ChannelFuture future = write0(frame);
+                            if (future.isDone()) {
+                                firstWriteComplete(future, promise);
+                            } else {
+                                firstWriteComplete(future, promise);
+                            }
+                            return;
+                        }
+                    } else if (!(msg instanceof Http2GoAwayFrame)) {
+                        String msgStr = msg.toString();
+                        ReferenceCountUtil.release(msg);
+                        promise.setFailure(new IllegalArgumentException(
+                                "Message must be an Http2GoAwayFrame or Http2StreamFrame: " + msgStr));
+                        return;
+                    }
+
+                    ChannelFuture future = write0(msg);
+                    if (future.isDone()) {
+                        writeComplete(future, promise, bytes);
+                    } else {
+                        future.addListener(new ChannelFutureListener() {
+                            @Override
+                            public void operationComplete(ChannelFuture future) throws Exception {
+                                writeComplete(future, promise, bytes);
+                            }
+                        });
+                    }
+                } catch (Throwable t) {
+                    promise.tryFailure(t);
+                } finally {
+                    flush = true;
+                }
+            }
+
+            private void firstWriteComplete(ChannelFuture future, ChannelPromise promise) {
+                Throwable cause = future.cause();
+                if (cause == null) {
+                    promise.setSuccess();
+                    setWritable();
+                } else {
+                    promise.setFailure(cause);
+                    closeForcibly();
+                }
+            }
+
+            private void writeComplete(ChannelFuture future, ChannelPromise promise, long bytes) {
+                Throwable cause = future.cause();
+                if (cause == null) {
+                    promise.setSuccess();
+                } else {
+                    promise.setFailure(cause);
+                    if (bytes > 0 && isActive()) {
+                        /*
+                         * Return the flow control window of the failed data frame.
+                         */
+                        incrementOutboundFlowControlWindow(bytes, true);
+                    }
+                }
+            }
+
+            private Http2StreamFrame validateStreamFrame(Http2StreamFrame frame) {
+                if (frame.stream() != null && frame.stream() != stream) {
+                    String msgString = frame.toString();
+                    ReferenceCountUtil.release(frame);
+                    throw new IllegalArgumentException(
+                            "Stream " + frame.stream() + " must not be set on the frame: " + msgString);
+                }
+                return frame;
+            }
+
+            private ChannelFuture write0(Object msg) {
+                ChannelPromise promise = ctx.newPromise();
+                Http2MultiplexCodec.this.write(ctx, msg, promise);
+                return promise;
+            }
+
+            @Override
+            public void flush() {
+                if (flush) {
+                    // If we are current channelReadComplete(...) call we should just mark this Channel with a flush
+                    // pending. We will ensure we trigger ctx.flush() after we processed all Channels later on and so
+                    // aggregate the flushes. This is done as ctx.flush() is expensive when as it may trigger an
+                    // write(...) or writev(...) operation on the socket.
+                    if (inFireChannelReadComplete) {
+                        flushPending = true;
+                    } else {
+                        flush0(ctx);
+                    }
+                } else {
+                    // There is nothing to flush so this is a NOOP.
+                }
+            }
+
+            @Override
+            public ChannelPromise voidPromise() {
+                return unsafeVoidPromise;
+            }
+
+            @Override
+            public ChannelOutboundBuffer outboundBuffer() {
+                // Always return null as we not use the ChannelOutboundBuffer and not even support it.
+                return null;
             }
         }
 
@@ -829,21 +1121,12 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
                 setRecvByteBufAllocator(Http2StreamChannelRecvByteBufAllocator.INSTANCE);
             }
 
-            /**
-             * @deprecated  Use {@link #getWriteBufferWaterMark()} instead.
-             */
             @Override
-            @Deprecated
             public int getWriteBufferHighWaterMark() {
-                int window = (int) min(Integer.MAX_VALUE, outboundFlowControlWindow);
-                return max(0, window);
+                return max(0, (int) min(Integer.MAX_VALUE, outboundFlowControlWindow));
             }
 
-            /**
-             * @deprecated  Use {@link #getWriteBufferWaterMark()} instead.
-             */
             @Override
-            @Deprecated
             public int getWriteBufferLowWaterMark() {
                 return getWriteBufferHighWaterMark();
             }
@@ -855,7 +1138,8 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
 
             @Override
             public WriteBufferWaterMark getWriteBufferWaterMark() {
-                throw new UnsupportedOperationException();
+                int mark = getWriteBufferHighWaterMark();
+                return new WriteBufferWaterMark(mark, mark);
             }
 
             @Override
@@ -863,18 +1147,12 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
                 throw new UnsupportedOperationException();
             }
 
-            /**
-             * @deprecated  Use {@link #setWriteBufferWaterMark(WriteBufferWaterMark)} instead.
-             */
             @Override
             @Deprecated
             public ChannelConfig setWriteBufferHighWaterMark(int writeBufferHighWaterMark) {
                 throw new UnsupportedOperationException();
             }
 
-            /**
-             * @deprecated  Use {@link #setWriteBufferWaterMark(WriteBufferWaterMark)} instead.
-             */
             @Override
             @Deprecated
             public ChannelConfig setWriteBufferLowWaterMark(int writeBufferLowWaterMark) {

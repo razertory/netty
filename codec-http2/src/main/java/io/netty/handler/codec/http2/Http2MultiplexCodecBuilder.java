@@ -38,7 +38,7 @@ public final class Http2MultiplexCodecBuilder
      */
     public Http2MultiplexCodecBuilder(boolean server, ChannelHandler childHandler) {
         server(server);
-        this.childHandler = checkNotNull(childHandler, "childHandler");
+        this.childHandler = Http2MultiplexCodec.checkSharable(checkNotNull(childHandler, "childHandler"));
     }
 
     @Override
