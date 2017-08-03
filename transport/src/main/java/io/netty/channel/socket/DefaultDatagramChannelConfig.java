@@ -44,7 +44,7 @@ public class DefaultDatagramChannelConfig extends DefaultChannelConfig implement
 
     private static final InternalLogger logger = InternalLoggerFactory.getInstance(DefaultDatagramChannelConfig.class);
 
-    private final DatagramSocket javaSocket;
+    protected final DatagramSocket javaSocket;
     private volatile boolean activeOnOpen;
 
     /**
